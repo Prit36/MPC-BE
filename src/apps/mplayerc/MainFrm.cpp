@@ -46,6 +46,7 @@
 #include "FullscreenWnd.h"
 #include "TunerScanDlg.h"
 #include "UpdateChecker.h"
+#include "DSUtil/PerfTimer.h"
 
 #include <ExtLib/BaseClasses/mtype.h>
 #include <Mpconfig.h>
@@ -684,6 +685,7 @@ CMainFrame::~CMainFrame()
 
 int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 {
+	PerfTimer::Log(L"CMainFrame::OnCreate enter");
 	if (__super::OnCreate(lpCreateStruct) == -1) {
 		return -1;
 	}
@@ -736,10 +738,12 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		m_wndPreView.SetRelativeSize(s.iSmartSeekSize);
 	}
 
-	CComPtr<IWICBitmap> pBitmap;
-	HRESULT hr = WicLoadImage(&pBitmap, false, (GetProgramDir() + L"background.png").GetString());
-	if (SUCCEEDED(hr)) {
-		m_BackGroundGradient.Create(pBitmap);
+	if (__argc <= 1) {
+		CComPtr<IWICBitmap> pBitmap;
+		HRESULT hr = WicLoadImage(&pBitmap, false, (GetProgramDir() + L"background.png").GetString());
+		if (SUCCEEDED(hr)) {
+			m_BackGroundGradient.Create(pBitmap);
+		}
 	}
 
 	// static bars
@@ -789,12 +793,17 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	m_wndPlaylistBar.SetHeight(100);
 	m_dockingbars.emplace_back(&m_wndPlaylistBar);
 
-	std::vector<CStringW> recentPath;
-	AfxGetMyApp()->m_HistoryFile.GetRecentPaths(recentPath, 1);
-	if (recentPath.size()) {
-		m_wndPlaylistBar.LoadPlaylist(recentPath.front());
-		if (s.bKeepHistory) {
-			s.strLastOpenFile = recentPath.front();
+	const bool bHasCmdLineFiles = (__argc > 1);
+	if (!bHasCmdLineFiles) {
+		std::vector<CStringW> recentPath;
+		AfxGetMyApp()->m_HistoryFile.GetRecentPaths(recentPath, 1);
+		if (recentPath.size()) {
+			m_wndPlaylistBar.LoadPlaylist(recentPath.front());
+			if (s.bKeepHistory) {
+				s.strLastOpenFile = recentPath.front();
+			}
+		} else {
+			m_wndPlaylistBar.LoadPlaylist(L"");
 		}
 	} else {
 		m_wndPlaylistBar.LoadPlaylist(L"");
@@ -870,6 +879,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		DwmIsCompositionEnabled(&m_bDesktopCompositionEnabled);
 	}
 
+	PerfTimer::Log(L"OnCreate: before loading SVGs");
 	bool ok = m_svgFlybar.Load(::GetProgramDir() + L"flybar.svg");
 	if (!ok) {
 		ok = m_svgFlybar.Load(IDF_SVG_FLYBAR);
@@ -878,6 +888,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	m_OSD.UpdateButtonImages();
 
 	ok = m_svgTaskbarButtons.Load(IDF_SVG_TASKBAR_BUTTONS);
+	PerfTimer::Log(L"OnCreate: after loading SVGs");
 
 	// Windows 8 - if app is not pinned on the taskbar, it's not receive "TaskbarButtonCreated" message. Bug ???
 	if (SysVersion::IsWin8orLater()) {
@@ -890,65 +901,16 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		subChangeNotifyThreadStart();
 	}
 
-	// Setup 'CONSENT' cookie for internal Youtube parser
-	constexpr auto lpszUrl = L"https://www.youtube.com";
-
-	CString lpszCookieData;
-	DWORD dwSize = 2048;
-
-	InternetGetCookieExW(lpszUrl, nullptr, lpszCookieData.GetBuffer(dwSize), &dwSize, INTERNET_COOKIE_HTTPONLY, nullptr);
-	lpszCookieData.ReleaseBuffer(dwSize);
-
-	int consentId = 0;
-	bool bSetCookies = true;
-
-	if (!lpszCookieData.IsEmpty()) {
-		std::list<CString> cookies;
-		Explode(lpszCookieData, cookies, L';');
-		for (auto& cookie : cookies) {
-			cookie.Trim();
-			const auto pos = cookie.Find(L'=');
-			if (pos > 0) {
-				const auto param = cookie.Left(pos);
-				const auto value = cookie.Mid(pos + 1);
-
-				if (param == L"__Secure-3PSID") {
-					bSetCookies = false;
-					break;
-				} else if (param == L"CONSENT") {
-					if (value.Find(L"YES") != -1) {
-						bSetCookies = false;
-						break;
-					}
-					consentId = _wtoi(RegExpParse(value.GetString(), LR"(PENDING\+(\d+))"));
-				}
-			}
-		}
-	}
-
-	if (bSetCookies) {
-		if (!consentId) {
-			std::random_device random_device;
-			std::mt19937 generator(random_device());
-			std::uniform_int_distribution<> distribution(100, 999);
-
-			consentId = distribution(generator);
-		}
-
-		SYSTEMTIME st;
-		::GetLocalTime(&st);
-
-		lpszCookieData.Format(L"YES+cb.%04u%02u%02u-17-p0.en+FX+%d", st.wYear, st.wMonth, st.wDay, consentId);
-		InternetSetCookieExW(lpszUrl, L"CONSENT", lpszCookieData.GetString(), INTERNET_COOKIE_HTTPONLY, NULL);
-	}
-
 	if (s.bWinMediaControls) {
+		PerfTimer::Log(L"OnCreate: before CMediaControls.Init");
 		m_CMediaControls.Init(this);
+		PerfTimer::Log(L"OnCreate: after CMediaControls.Init");
 	}
 
 	RegisterApplicationRestart(L"", RESTART_NO_CRASH | RESTART_NO_HANG);
 
 	cmdLineThread = std::thread([this] { cmdLineThreadFunction(); });
+	PerfTimer::Log(L"CMainFrame::OnCreate exit");
 
 	return 0;
 }
@@ -4535,6 +4497,7 @@ void CMainFrame::OnUpdatePlayerStatus(CCmdUI* pCmdUI)
 
 void CMainFrame::OnFilePostOpenMedia(std::unique_ptr<OpenMediaData>& pOMD)
 {
+	PerfTimer::Log(L"OnFilePostOpenMedia enter");
 	ASSERT(m_eMediaLoadState == MLS_LOADING);
 	SetLoadState(MLS_LOADED);
 
@@ -4682,7 +4645,9 @@ void CMainFrame::OnFilePostOpenMedia(std::unique_ptr<OpenMediaData>& pOMD)
 				&& s.iDMChangeDelay > 0) {
 			SetTimer(TIMER_DM_AUTOCHANGING, s.iDMChangeDelay * 1000, nullptr);
 		} else {
+			PerfTimer::Log(L"Before SendMessage ID_PLAY_PLAY");
 			SendMessageW(WM_COMMAND, ID_PLAY_PLAY);
+			PerfTimer::Log(L"After SendMessage ID_PLAY_PLAY");
 		}
 	} else {
 		SendMessageW(WM_COMMAND, ID_PLAY_PAUSE);
@@ -4735,13 +4700,13 @@ void CMainFrame::OnFilePostOpenMedia(std::unique_ptr<OpenMediaData>& pOMD)
 		ReleasePreviewGraph();
 	}
 
-	if (CanPreviewUse() && m_wndSeekBar.IsVisible()) {
+	if (m_bWndPreViewOn && m_wndSeekBar.IsVisible()) {
 		CPoint point;
 		GetCursorPos(&point);
 
 		CRect rect;
 		m_wndSeekBar.GetWindowRect(&rect);
-		if (rect.PtInRect(point)) {
+		if (rect.PtInRect(point) && CanPreviewUse()) {
 			m_wndSeekBar.PreviewWindowShow();
 		}
 	}
@@ -5552,6 +5517,7 @@ LRESULT CMainFrame::OnDXVAStateChange(WPARAM wParam, LPARAM lParam)
 
 LRESULT CMainFrame::HandleCmdLine(WPARAM wParam, LPARAM lParam)
 {
+	PerfTimer::Log(L"HandleCmdLine enter");
 	if (m_bClosingState) {
 		return 0;
 	}
@@ -5858,7 +5824,9 @@ void CMainFrame::cmdLineThreadFunction()
 					lock.unlock();
 
 					if (!cmdLine.empty()) {
+						PerfTimer::Log(L"cmdLineThreadFunction sending WM_HANDLE_CMDLINE");
 						SendMessageW(WM_HANDLE_CMDLINE, 0, LPARAM(&cmdLine));
+						PerfTimer::Log(L"cmdLineThreadFunction SendMessage WM_HANDLE_CMDLINE returned");
 					}
 				}
 		}
@@ -8215,7 +8183,9 @@ void CMainFrame::OnPlayPlay()
 			if (m_bIsLiveOnline || FAILED(m_pMS->SetRate(m_PlaybackRate))) {
 				m_PlaybackRate = 1.0;
 			};
+			PerfTimer::Log(L"Before m_pMC->Run()");
 			m_pMC->Run();
+			PerfTimer::Log(L"After m_pMC->Run()");
 		} else if (GetPlaybackMode() == PM_DVD) {
 			if (m_PlaybackRate >= 0.0) {
 				m_pDVDC->PlayForwards(m_PlaybackRate, DVD_CMD_FLAG_Block, nullptr);
@@ -12226,29 +12196,17 @@ CString CMainFrame::OpenCreateGraphObject(OpenMediaData* pOMD)
 		m_bCustomGraph = m_bShockwaveGraph;
 
 		if (!m_bCustomGraph) {
+			PerfTimer::Log(L"OpenCreateGraphObject: before creating CFGManagerPlayer");
 			auto pFGManager = DNew CFGManagerPlayer(L"CFGManagerPlayer", nullptr, m_pVideoWnd->m_hWnd);
 			m_pGB = pFGManager;
+			PerfTimer::Log(L"OpenCreateGraphObject: after creating CFGManagerPlayer");
 
 			if (m_pGB) {
 				pFGManager->SetUserAgent(http::userAgent);
-
-				if (bUseSmartSeek) {
-					// build graph for preview
-					auto pFGManager_preview = DNew CFGManagerPlayer(L"CFGManagerPlayer", nullptr, m_wndPreView.GetVideoHWND(), s.iSmartSeekVR + 1);
-					m_pGB_preview = pFGManager_preview;
-
-					if (m_pGB_preview) {
-						pFGManager_preview->SetUserAgent(http::userAgent);
-					}
-				}
 			}
 		}
 	} else if (OpenDVDData* pDVDData = dynamic_cast<OpenDVDData*>(pOMD)) {
 		m_pGB = DNew CFGManagerDVD(L"CFGManagerDVD", nullptr, m_pVideoWnd->m_hWnd);
-
-		if (m_pGB && bUseSmartSeek) {
-			m_pGB_preview = DNew CFGManagerDVD(L"CFGManagerDVD", nullptr, m_wndPreView.GetVideoHWND(), true);
-		}
 	} else if (OpenDeviceData* pDeviceData = dynamic_cast<OpenDeviceData*>(pOMD)) {
 		if (s.iDefaultCaptureDevice == 1) {
 			m_pGB = DNew CFGManagerBDA(L"CFGManagerBDA", nullptr, m_pVideoWnd->m_hWnd);
@@ -12271,19 +12229,7 @@ CString CMainFrame::OpenCreateGraphObject(OpenMediaData* pOMD)
 	m_pBA = m_pGB; // audio
 	m_pFS = m_pGB;
 
-	if (m_pGB_preview) {
-		m_pGB_preview->AddToROT();
-
-		m_pMC_preview = m_pGB_preview;
-		m_pMS_preview = m_pGB_preview; // general
-
-		m_pVW_preview = m_pGB_preview;
-		m_pBV_preview = m_pGB_preview;
-
-		m_bWndPreViewOn = true;
-	} else {
-		m_bWndPreViewOn = false;
-	}
+	m_bWndPreViewOn = bUseSmartSeek;
 
 	if (!(m_pMC && m_pME && m_pMS)
 			|| !(m_pVW && m_pBV)
@@ -12361,6 +12307,9 @@ HRESULT CMainFrame::PreviewWindowShow(REFERENCE_TIME rtCur2)
 	if (!CanPreviewUse()) {
 		return E_FAIL;
 	}
+	if (!m_pGB_preview && !EnsurePreviewGraph()) {
+		return E_FAIL;
+	}
 
 	HRESULT hr = S_OK;
 	rtCur2 = GetClosestKeyFrame(rtCur2);
@@ -12433,6 +12382,7 @@ HRESULT CMainFrame::PreviewWindowShow(REFERENCE_TIME rtCur2)
 
 CString CMainFrame::OpenFile(OpenFileData* pOFD, const CStringW& youtubeUrl)
 {
+	PerfTimer::Log(L"OpenFile enter");
 	if (!pOFD->fi.Valid()) {
 		return ResStr(IDS_MAINFRM_81);
 	}
@@ -12508,7 +12458,9 @@ CString CMainFrame::OpenFile(OpenFileData* pOFD, const CStringW& youtubeUrl)
 				}
 			}
 
+			PerfTimer::Log(L"m_pGB->RenderFile before");
 			hr = m_pGB->RenderFile(fn, nullptr);
+			PerfTimer::Log(L"m_pGB->RenderFile after");
 
 			if (bIsDirSet) {
 				::SetCurrentDirectoryW(oldcurdir);
@@ -12598,12 +12550,6 @@ CString CMainFrame::OpenFile(OpenFileData* pOFD, const CStringW& youtubeUrl)
 			fi.GetChapters(chaplist);
 
 			AddCustomChapters(chaplist);
-		}
-
-		if (m_pGB_preview) {
-			if (!bIsVideo || FAILED(m_pGB_preview->RenderFile(fn, nullptr))) {
-				ReleasePreviewGraph();
-			}
 		}
 
 		if (youtubeUrl.GetLength()) {
@@ -14415,6 +14361,7 @@ CStringW CMainFrame::CheckOpenYtDlp(OpenFileData& ofd)
 #define BREAK(msg) {err = msg; break;}
 bool CMainFrame::OpenMediaPrivate(std::unique_ptr<OpenMediaData>& pOMD)
 {
+	PerfTimer::Log(L"OpenMediaPrivate enter");
 	ASSERT(m_eMediaLoadState == MLS_LOADING);
 	CAppSettings& s = AfxGetAppSettings();
 
@@ -14568,21 +14515,6 @@ bool CMainFrame::OpenMediaPrivate(std::unique_ptr<OpenMediaData>& pOMD)
 			m_pPlaybackNotify = m_pMFVDC;
 		}
 
-		if (m_pGB_preview) {
-			m_pGB_preview->FindInterface(IID_PPV_ARGS(&m_pMFVDC_preview), TRUE);
-			m_pGB_preview->FindInterface(IID_PPV_ARGS(&m_pCAP_preview), TRUE);
-
-			RECT wr;
-			m_wndPreView.GetClientRect(&wr);
-			if (m_pMFVDC_preview) {
-				m_pMFVDC_preview->SetVideoWindow(m_wndPreView.GetVideoHWND());
-				m_pMFVDC_preview->SetVideoPosition(nullptr, &wr);
-			}
-			if (m_pCAP_preview) {
-				m_pCAP_preview->SetPosition(wr, wr);
-			}
-		}
-
 		BeginEnumFilters(m_pGB, pEF, pBF) {
 			if (m_pLN21 = pBF) {
 				m_pLN21->SetServiceState(s.bClosedCaptions ? AM_L21_CCSTATE_On : AM_L21_CCSTATE_Off);
@@ -14622,12 +14554,16 @@ bool CMainFrame::OpenMediaPrivate(std::unique_ptr<OpenMediaData>& pOMD)
 			EndEnumFilters;
 		}
 
+		PerfTimer::Log(L"OpenMediaPrivate: before OpenCustomizeGraph");
 		OpenCustomizeGraph();
+		PerfTimer::Log(L"OpenMediaPrivate: after OpenCustomizeGraph");
 		if (m_fOpeningAborted) {
 			BREAK(aborted)
 		}
 
+		PerfTimer::Log(L"OpenMediaPrivate: before OpenSetupVideo");
 		OpenSetupVideo();
+		PerfTimer::Log(L"OpenMediaPrivate: after OpenSetupVideo");
 		if (m_fOpeningAborted) {
 			BREAK(aborted)
 		}
@@ -14648,7 +14584,9 @@ bool CMainFrame::OpenMediaPrivate(std::unique_ptr<OpenMediaData>& pOMD)
 			}
 		}
 
+		PerfTimer::Log(L"OpenMediaPrivate: before OpenSetupAudio");
 		OpenSetupAudio();
+		PerfTimer::Log(L"OpenMediaPrivate: after OpenSetupAudio");
 		if (m_fOpeningAborted) {
 			BREAK(aborted)
 		}
@@ -14660,7 +14598,9 @@ bool CMainFrame::OpenMediaPrivate(std::unique_ptr<OpenMediaData>& pOMD)
 
 		UpdateWindowTitle();
 
+		PerfTimer::Log(L"OpenMediaPrivate: before OpenSetupSubStream");
 		OpenSetupSubStream(pOMD.get());
+		PerfTimer::Log(L"OpenMediaPrivate: after OpenSetupSubStream");
 
 		m_pSwitcherFilter = FindSwitcherFilter();
 
@@ -17791,6 +17731,7 @@ void CMainFrame::SendStatusCompactPath(const CString& path)
 
 BOOL CMainFrame::OpenCurPlaylistItem(REFERENCE_TIME rtStart/* = INVALID_TIME*/, BOOL bAddRecent/* = TRUE*/)
 {
+	PerfTimer::Log(L"OpenCurPlaylistItem enter");
 	if (m_wndPlaylistBar.GetCount() == 0) {
 		return FALSE;
 	}
@@ -17853,6 +17794,7 @@ void CMainFrame::AddCurDevToPlaylist()
 
 void CMainFrame::OpenMedia(std::unique_ptr<OpenMediaData> pOMD)
 {
+	PerfTimer::Log(L"OpenMedia enter");
 	auto pFileData   = dynamic_cast<const OpenFileData*>(pOMD.get());
 	auto pDeviceData = dynamic_cast<const OpenDeviceData*>(pOMD.get());
 
@@ -19805,21 +19747,143 @@ CString CMainFrame::FillMessage()
 	return msg;
 }
 
+bool CMainFrame::EnsurePreviewGraph()
+{
+	if (m_pGB_preview) {
+		return true;
+	}
+	if (!m_bWndPreViewOn || m_eMediaLoadState != MLS_LOADED || m_bAudioOnly) {
+		return false;
+	}
+
+	CAppSettings& s = AfxGetAppSettings();
+	CString fn = m_PlaybackInfo.RenderedPath;
+	if (fn.IsEmpty()) {
+		fn = GetCurFileName();
+	}
+
+	if (GetPlaybackMode() == PM_FILE && !fn.IsEmpty()) {
+		auto pFGManager_preview = DNew CFGManagerPlayer(L"CFGManagerPlayer", nullptr, m_wndPreView.GetVideoHWND(), s.iSmartSeekVR + 1);
+		m_pGB_preview = pFGManager_preview;
+
+		if (m_pGB_preview) {
+			pFGManager_preview->SetUserAgent(http::userAgent);
+			m_pGB_preview->AddToROT();
+
+			m_pMC_preview = m_pGB_preview;
+			m_pMS_preview = m_pGB_preview;
+			m_pVW_preview = m_pGB_preview;
+			m_pBV_preview = m_pGB_preview;
+
+			if (FAILED(m_pGB_preview->RenderFile(fn, nullptr))) {
+				ReleasePreviewGraph();
+				return false;
+			}
+
+			m_pGB_preview->FindInterface(IID_PPV_ARGS(&m_pMFVDC_preview), TRUE);
+			m_pGB_preview->FindInterface(IID_PPV_ARGS(&m_pCAP_preview), TRUE);
+
+			RECT wr;
+			m_wndPreView.GetClientRect(&wr);
+			if (m_pMFVDC_preview) {
+				m_pMFVDC_preview->SetVideoWindow(m_wndPreView.GetVideoHWND());
+				m_pMFVDC_preview->SetVideoPosition(nullptr, &wr);
+			}
+			if (m_pCAP_preview) {
+				m_pCAP_preview->SetPosition(wr, wr);
+			}
+
+			if (m_pMC_preview) {
+				m_pMC_preview->Pause();
+			}
+			return true;
+		}
+	} else if (GetPlaybackMode() == PM_DVD) {
+		m_pGB_preview = DNew CFGManagerDVD(L"CFGManagerDVD", nullptr, m_wndPreView.GetVideoHWND(), true);
+		if (m_pGB_preview) {
+			m_pGB_preview->AddToROT();
+			m_pMC_preview = m_pGB_preview;
+			m_pMS_preview = m_pGB_preview;
+			m_pVW_preview = m_pGB_preview;
+			m_pBV_preview = m_pGB_preview;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool CMainFrame::CanPreviewUse()
 {
-	return (m_pGB_preview && m_bWndPreViewOn
+	return (m_bWndPreViewOn
 			&& m_eMediaLoadState == MLS_LOADED
 			&& !m_bAudioOnly);
 }
 
 bool CMainFrame::TogglePreview()
 {
-	if (m_pGB_preview && m_eMediaLoadState == MLS_LOADED && !m_bAudioOnly) {
+	if (m_eMediaLoadState == MLS_LOADED && !m_bAudioOnly) {
 		m_bWndPreViewOn = !m_bWndPreViewOn;
-
+		if (m_bWndPreViewOn) {
+			EnsurePreviewGraph();
+		}
 		return m_bWndPreViewOn;
 	}
 	return false;
+}
+
+void CMainFrame::SetupYouTubeConsentCookie()
+{
+	constexpr auto lpszUrl = L"https://www.youtube.com";
+
+	CString lpszCookieData;
+	DWORD dwSize = 2048;
+
+	InternetGetCookieExW(lpszUrl, nullptr, lpszCookieData.GetBuffer(dwSize), &dwSize, INTERNET_COOKIE_HTTPONLY, nullptr);
+	lpszCookieData.ReleaseBuffer(dwSize);
+
+	int consentId = 0;
+	bool bSetCookies = true;
+
+	if (!lpszCookieData.IsEmpty()) {
+		std::list<CString> cookies;
+		Explode(lpszCookieData, cookies, L';');
+		for (auto& cookie : cookies) {
+			cookie.Trim();
+			const auto pos = cookie.Find(L'=');
+			if (pos > 0) {
+				const auto param = cookie.Left(pos);
+				const auto value = cookie.Mid(pos + 1);
+
+				if (param == L"__Secure-3PSID") {
+					bSetCookies = false;
+					break;
+				} else if (param == L"CONSENT") {
+					if (value.Find(L"YES") != -1) {
+						bSetCookies = false;
+						break;
+					}
+					consentId = _wtoi(RegExpParse(value.GetString(), LR"(PENDING\+(\d+))"));
+				}
+			}
+		}
+	}
+
+	if (bSetCookies) {
+		if (!consentId) {
+			std::random_device random_device;
+			std::mt19937 generator(random_device());
+			std::uniform_int_distribution<> distribution(100, 999);
+
+			consentId = distribution(generator);
+		}
+
+		SYSTEMTIME st;
+		::GetLocalTime(&st);
+
+		lpszCookieData.Format(L"YES+cb.%04u%02u%02u-17-p0.en+FX+%d", st.wYear, st.wMonth, st.wDay, consentId);
+		InternetSetCookieExW(lpszUrl, L"CONSENT", lpszCookieData.GetString(), INTERNET_COOKIE_HTTPONLY, NULL);
+	}
 }
 
 CStringW GetCoverImgFromPath(CStringW fullfilename)

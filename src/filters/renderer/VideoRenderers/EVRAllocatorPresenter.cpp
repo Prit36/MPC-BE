@@ -2416,8 +2416,22 @@ void CEVRAllocatorPresenter::VSyncThread()
 						}
 					}
 				}
-				else if (m_pDevice9ExRefresh && m_ExtraSets.iDisplayStats == 1) {
-					if (prevSL == UINT_MAX) {
+				else if (m_ExtraSets.iDisplayStats == 1) {
+					if (!m_pDevice9ExRefresh && m_pD3D9Ex) {
+						D3DPRESENT_PARAMETERS d3dpp = { 0 };
+						d3dpp.Windowed = TRUE;
+						d3dpp.BackBufferWidth = 640;
+						d3dpp.BackBufferHeight = 480;
+						d3dpp.BackBufferCount = 0;
+						d3dpp.BackBufferFormat = m_d3dpp.BackBufferFormat;
+						d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+						d3dpp.Flags = D3DPRESENTFLAG_VIDEO;
+						m_pD3D9Ex->CreateDeviceEx(
+								m_CurrentAdapter, D3DDEVTYPE_HAL, GetShellWindow(),
+								D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED | D3DCREATE_FPU_PRESERVE,
+								&d3dpp, nullptr, &m_pDevice9ExRefresh);
+					}
+					if (m_pDevice9ExRefresh && prevSL == UINT_MAX) {
 						D3DRASTER_STATUS rasterStatus;
 						if (S_OK == m_pDevice9ExRefresh->GetRasterStatus(0, &rasterStatus)) {
 							while (rasterStatus.ScanLine == 0) { // skip zero scanline with unknown start time

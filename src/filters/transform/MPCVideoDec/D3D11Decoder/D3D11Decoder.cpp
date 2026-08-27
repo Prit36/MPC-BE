@@ -25,6 +25,7 @@
 #include <dxva2_guids.h>
 #include "DSUtil/DSUtil.h"
 #include "DSUtil/DXVAState.h"
+#include "DSUtil/PerfTimer.h"
 #include "D3D11Decoder.h"
 #include "../MPCVideoDec.h"
 #include "../DxgiUtils.h"
@@ -774,6 +775,7 @@ HRESULT CD3D11Decoder::DeliverFrame()
 	m_pFilter->AddFrameSideData(pSample, pFrame);
 
 	HRESULT hr = m_pFilter->GetOutputPin()->Deliver(pSample);
+	PerfTimer::LogFirstFrame(L"CD3D11Decoder: Delivered first D3D11 hardware frame to video renderer");
 
 	if (bSizeChanged && biHeight) {
 		m_pFilter->NotifyEvent(EC_VIDEO_SIZE_CHANGED, MAKELPARAM(biWidth, abs(biHeight)), 0);

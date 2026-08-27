@@ -35,6 +35,7 @@
 #include "Variables.h"
 #include "Utils.h"
 #include "apps/mplayerc/mpc_messages.h"
+#include "DSUtil/PerfTimer.h"
 
 #define FRAMERATE_MAX_DELTA 3000
 
@@ -753,23 +754,6 @@ HRESULT CDX9AllocatorPresenter::CreateDevice(CString &_Error)
 	m_strProcessingFmt = GetD3DFormatStr(m_SurfaceFmt);
 	m_strBackbufferFmt = GetD3DFormatStr(m_BackbufferFmt);
 
-	if (!m_pDevice9ExRefresh) {
-		D3DPRESENT_PARAMETERS d3dpp = { 0 };
-		d3dpp.Windowed = TRUE;
-		d3dpp.BackBufferWidth = 640;
-		d3dpp.BackBufferHeight = 480;
-		d3dpp.BackBufferCount = 0;
-		d3dpp.BackBufferFormat = m_d3dpp.BackBufferFormat;
-		d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-		d3dpp.Flags = D3DPRESENTFLAG_VIDEO;
-
-		hr = m_pD3D9Ex->CreateDeviceEx(
-				m_CurrentAdapter, D3DDEVTYPE_HAL, GetShellWindow(),
-				D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED | D3DCREATE_FPU_PRESERVE,
-				&d3dpp, nullptr, &m_pDevice9ExRefresh);
-		DLog(L"    => CreateDeviceEx(m_pDevice9ExRefresh) : %s", S_OK == hr ? L"S_OK" : GetWindowsErrorMessage(hr, m_hD3D9).GetString());
-	}
-
 	if (!bTryToReset) {
 		m_Font3D.InvalidateDeviceObjects();
 		HRESULT hr2 = m_Font3D.InitDeviceObjects(m_pDevice9Ex);
@@ -1482,6 +1466,9 @@ STDMETHODIMP_(bool) CDX9AllocatorPresenter::Paint(bool fAll)
 			hr = m_pDevice9Ex->PresentEx(rSrcPri, rDstPri, nullptr, nullptr, 0);
 		} else {
 			hr = m_pDevice9Ex->PresentEx(nullptr, nullptr, nullptr, nullptr, 0);
+		}
+		if (SUCCEEDED(hr)) {
+			PerfTimer::LogFirstFrame(L"CDX9AllocatorPresenter::Paint (PresentEx)");
 		}
 
 		// Issue an End event

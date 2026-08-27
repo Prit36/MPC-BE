@@ -1191,7 +1191,9 @@ public:
 	HRESULT PreviewWindowHide();
 	HRESULT PreviewWindowShow(REFERENCE_TIME rtCur2);
 	bool CanPreviewUse();
+	bool EnsurePreviewGraph();
 	bool TogglePreview();
+	void SetupYouTubeConsentCookie();
 
 	CFullscreenWnd* m_pFullscreenWnd;
 

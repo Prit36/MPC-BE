@@ -38,6 +38,7 @@
 #include <clsids.h>
 #include <moreuuids.h>
 #include <mvrInterfaces.h>
+#include "DSUtil/PerfTimer.h"
 #include "MediaFormats.h"
 #include "Content.h"
 #include <filters/renderer/VideoRenderers/IPinHook.h>
@@ -1076,7 +1077,9 @@ HRESULT CFGManager::ConnectInternal(IPin* pPinOut, IPin* pPinIn, bool bContinueR
 				pFGF = pMadVRAllocatorPresenter;
 			}
 
-			DLog(L"FGM: Connecting '%s'", pFGF->GetName());
+			CString msgStart;
+			msgStart.Format(L"ConnectInternal: trying filter '%s'", pFGF->GetName().GetString());
+			PerfTimer::Log(msgStart);
 
 			CComPtr<IBaseFilter> pBF;
 			std::list<CComQIPtr<IUnknown, &IID_IUnknown>> pUnks;
@@ -1140,7 +1143,9 @@ HRESULT CFGManager::ConnectInternal(IPin* pPinOut, IPin* pPinIn, bool bContinueR
 				}
 			}
 
+			PerfTimer::Log(L"ConnectInternal: calling ConnectFilterDirect");
 			hr = ConnectFilterDirect(pPinOut, pBF, nullptr);
+			PerfTimer::Log(L"ConnectInternal: ConnectFilterDirect returned");
 
 			if (SUCCEEDED(hr)) {
 				if (!IsStreamEnd(pBF)) {
@@ -1148,7 +1153,9 @@ HRESULT CFGManager::ConnectInternal(IPin* pPinOut, IPin* pPinIn, bool bContinueR
 				}
 
 				if (bContinueRender) {
+					PerfTimer::Log(L"ConnectInternal: continuing ConnectFilter downstream");
 					hr = ConnectFilter(pBF, pPinIn);
+					PerfTimer::Log(L"ConnectInternal: downstream ConnectFilter returned");
 				}
 
 				if (SUCCEEDED(hr)) {
@@ -1264,9 +1271,11 @@ STDMETHODIMP CFGManager::RenderFile(LPCWSTR lpcwstrFileName, LPCWSTR lpcwstrPlay
 	*/
 
 	CFGFilterList fl;
+	PerfTimer::Log(L"CFGManager::RenderFile EnumSourceFilters before");
 	if (FAILED(hr = EnumSourceFilters(lpcwstrFileName, fl))) {
 		return hr;
 	}
+	PerfTimer::Log(L"CFGManager::RenderFile EnumSourceFilters after");
 
 	std::vector<std::unique_ptr<CStreamDeadEnd>> deadends;
 
@@ -1276,11 +1285,17 @@ STDMETHODIMP CFGManager::RenderFile(LPCWSTR lpcwstrFileName, LPCWSTR lpcwstrPlay
 		CFGFilter* pFGF = fl.GetFilter(pos);
 		CComPtr<IBaseFilter> pBF;
 
+		CString msg;
+		msg.Format(L"AddSourceFilterInternal before: %s", pFGF->GetName().GetString());
+		PerfTimer::Log(msg);
 		if (SUCCEEDED(hr = AddSourceFilterInternal(pFGF, lpcwstrFileName, pFGF->GetName(), &pBF))) {
+			PerfTimer::Log(L"AddSourceFilterInternal succeeded");
 			m_streampath.clear();
 			m_deadends.clear();
 
+			PerfTimer::Log(L"ConnectFilter before");
 			hr = ConnectFilter(pBF, nullptr);
+			PerfTimer::Log(L"ConnectFilter after");
 			if (SUCCEEDED(hr)) {
 				m_bOpeningAborted = false;
 				return hr;
@@ -2948,15 +2963,19 @@ CFGManagerPlayer::CFGManagerPlayer(LPCWSTR pName, LPUNKNOWN pUnk, HWND hWnd, int
 	}
 
 	if (!m_bIsPreview) {
-		UINT64 armerit = MERIT64_RENDERER;
-
-		BeginEnumSysDev(CLSID_AudioRendererCategory, pMoniker) {
-			CFGFilterRegistry f(pMoniker);
-			if (f.GetMerit() > armerit) {
-				armerit = f.GetMerit() + 0x100;
+		static UINT64 s_cachedAudioRendererMerit = 0;
+		if (s_cachedAudioRendererMerit == 0) {
+			UINT64 armerit_temp = MERIT64_RENDERER;
+			BeginEnumSysDev(CLSID_AudioRendererCategory, pMoniker) {
+				CFGFilterRegistry f(pMoniker);
+				if (f.GetMerit() > armerit_temp) {
+					armerit_temp = f.GetMerit() + 0x100;
+				}
 			}
+			EndEnumSysDev
+			s_cachedAudioRendererMerit = armerit_temp;
 		}
-		EndEnumSysDev
+		UINT64 armerit = s_cachedAudioRendererMerit;
 
 		armerit += 0x100; // for the first audio output give higher priority
 

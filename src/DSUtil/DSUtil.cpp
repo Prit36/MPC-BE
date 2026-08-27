@@ -733,6 +733,19 @@ bool IsCLSIDRegistered(const CLSID& clsid)
 
 HRESULT CheckFilterCLSID(const CLSID& clsid)
 {
+	static CCritSec s_checkClsidLock;
+	static std::vector<std::pair<CLSID, HRESULT>> s_checkClsidCache;
+
+	{
+		CAutoLock lock(&s_checkClsidLock);
+		for (const auto& item : s_checkClsidCache) {
+			if (item.first == clsid) {
+				return item.second;
+			}
+		}
+	}
+
+	HRESULT hrResult = E_FAIL;
 	LPOLESTR pStr = nullptr;
 	if (S_OK == StringFromCLSID(clsid, &pStr) && pStr) {
 		CStringW str_clsid(pStr);
@@ -746,14 +759,19 @@ HRESULT CheckFilterCLSID(const CLSID& clsid)
 					&& ERROR_SUCCESS == key.QueryStringValue(nullptr, buf, &len)
 					&& ::PathFileExistsW(buf)) {
 
-				return S_OK; // installed and available
+				hrResult = S_OK; // installed and available
+			} else {
+				hrResult = S_FALSE; // installed but not available
 			}
-
-			return S_FALSE; // installed but not available
 		}
 	}
 
-	return E_FAIL; // not installed
+	{
+		CAutoLock lock(&s_checkClsidLock);
+		s_checkClsidCache.emplace_back(clsid, hrResult);
+	}
+
+	return hrResult;
 }
 
 void CStringToBin(CStringW str, std::vector<BYTE>& data)

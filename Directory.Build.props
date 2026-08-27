@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <VC_ATLMFC_IncludePath>C:\Users\My_Home\atlmfc_unified\include;$(VC_ATLMFC_IncludePath)</VC_ATLMFC_IncludePath>
+    <VC_ATLMFC_LibraryPath_x64>C:\Users\My_Home\atlmfc_unified\lib\x64;$(VC_ATLMFC_LibraryPath_x64)</VC_ATLMFC_LibraryPath_x64>
+    <VC_ATLMFC_LibraryPath_x86>C:\Users\My_Home\atlmfc_unified\lib\x86;$(VC_ATLMFC_LibraryPath_x86)</VC_ATLMFC_LibraryPath_x86>
+    <_VC_MFC_Installed>true</_VC_MFC_Installed>
+    <_VC_ATL_Installed>true</_VC_ATL_Installed>
+    <_VC_Target_ATLMFC_Installed>true</_VC_Target_ATLMFC_Installed>
+    <VC_MFC_Installed>true</VC_MFC_Installed>
+    <VC_ATL_Installed>true</VC_ATL_Installed>
+  </PropertyGroup>
+</Project>

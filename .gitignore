@@ -22,3 +22,5 @@
 /lib/libmingwex.a
 /lib64/libgcc.a
 /lib64/libmingwex.a
+startup_perf.log
+sample_video/

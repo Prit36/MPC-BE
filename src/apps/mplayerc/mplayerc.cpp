@@ -38,6 +38,7 @@
 #include "UpdateChecker.h"
 
 #include "Version.h"
+#include "DSUtil/PerfTimer.h"
 
 extern "C" {
 	// hack to avoid error "unresolved external symbol" when linking
@@ -173,6 +174,8 @@ END_MESSAGE_MAP()
 CMPlayerCApp::CMPlayerCApp()
 	: GetRemoteControlCode(GetRemoteControlCodeMicrosoft)
 {
+	PerfTimer::Init();
+	PerfTimer::Log(L"CMPlayerCApp ctor");
 }
 
 CMPlayerCApp::~CMPlayerCApp()
@@ -750,6 +753,7 @@ static BOOL SetHeapOptions()
 
 BOOL CMPlayerCApp::InitInstance()
 {
+	PerfTimer::Log(L"InitInstance enter");
 #ifdef _DEBUG
 	DbgSetModuleLevel(LOG_TRACE, DWORD_MAX);
 	DbgSetModuleLevel(LOG_ERROR, DWORD_MAX);
@@ -981,7 +985,9 @@ BOOL CMPlayerCApp::InitInstance()
 	}
 
 	// read settings
+	PerfTimer::Log(L"Before LoadSettings");
 	m_s.LoadSettings();
+	PerfTimer::Log(L"After LoadSettings");
 
 	if (!__super::InitInstance()) {
 		AfxMessageBox(L"InitInstance failed!");
@@ -1052,6 +1058,7 @@ BOOL CMPlayerCApp::InitInstance()
 		return FALSE;
 	}
 	pFrame->RestoreControlBars();
+	PerfTimer::Log(L"After RestoreControlBars");
 
 	const auto ptLastWindowPos = m_s.ptLastWindowPos;
 	const auto szLastWindowSize = m_s.szLastWindowSize;
@@ -1062,6 +1069,7 @@ BOOL CMPlayerCApp::InitInstance()
 	pFrame->SetIcon(AfxGetApp()->LoadIconW(IDR_MAINFRAME), TRUE);
 	pFrame->DragAcceptFiles();
 	pFrame->ShowWindow((m_s.nCLSwitches& CLSW_MINIMIZED) ? SW_SHOWMINIMIZED : SW_SHOW);
+	PerfTimer::Log(L"After ShowWindow");
 
 	if (SysVersion::IsWin10orLater()) {
 		m_s.ptLastWindowPos = ptLastWindowPos;
@@ -1084,7 +1092,11 @@ BOOL CMPlayerCApp::InitInstance()
 		}
 	}
 
-	SendCommandLine(m_pMainWnd->m_hWnd);
+	if (!m_cmdln.empty()) {
+		PerfTimer::Log(L"Direct HandleCmdLine start");
+		pFrame->HandleCmdLine(0, (LPARAM)&m_cmdln);
+		PerfTimer::Log(L"Direct HandleCmdLine end");
+	}
 	RegisterHotkeys();
 
 	pFrame->SetFocus();

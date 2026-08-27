@@ -35,6 +35,7 @@
 #include "DSUtil/SysVersion.h"
 #include "DSUtil/DXVAState.h"
 #include "DSUtil/VideoParser.h"
+#include "DSUtil/PerfTimer.h"
 #include "filters/parser/AviSplitter/AviSplitter.h"
 #include "filters/parser/OggSplitter/OggSplitter.h"
 #include "filters/parser/MpegSplitter/MpegSplitter.h"
@@ -1232,7 +1233,12 @@ CMPCVideoDecFilter::CMPCVideoDecFilter(LPUNKNOWN lpunk, HRESULT* phr)
 	m_FormatConverter.SetOptions(m_nSwRGBLevels);
 
 	HWND hWnd = nullptr;
-	EnumWindows(EnumFindProcessWnd, (LPARAM)&hWnd);
+	if (AfxGetApp() && AfxGetApp()->m_pMainWnd) {
+		hWnd = AfxGetApp()->m_pMainWnd->m_hWnd;
+	}
+	if (!hWnd) {
+		EnumWindows(EnumFindProcessWnd, (LPARAM)&hWnd);
+	}
 	DetectVideoCard(hWnd);
 
 	if (SysVersion::IsWin8orLater() && m_nHwDecoder == HWDec_D3D11) {
@@ -1271,26 +1277,37 @@ CMPCVideoDecFilter::~CMPCVideoDecFilter()
 
 void CMPCVideoDecFilter::DetectVideoCard(HWND hWnd)
 {
-	m_nPCIVendor         = 0;
-	m_nPCIDevice         = 0;
-	m_VideoDriverVersion = 0;
+	static struct CachedGpuInfo {
+		UINT nPCIVendor = 0;
+		UINT nPCIDevice = 0;
+		int64_t VideoDriverVersion = 0;
+		CString strDeviceDescription;
+		bool inited = false;
+	} s_cachedGpu;
 
-	auto pD3D9 = D3D9Helper::Direct3DCreate9();
-	if (pD3D9) {
-		D3DADAPTER_IDENTIFIER9 AdapID9 = {};
-		if (pD3D9->GetAdapterIdentifier(D3D9Helper::GetAdapter(pD3D9, hWnd), 0, &AdapID9) == S_OK) {
-			m_nPCIVendor         = AdapID9.VendorId;
-			m_nPCIDevice         = AdapID9.DeviceId;
-			m_VideoDriverVersion = AdapID9.DriverVersion.QuadPart;
-			if (SysVersion::IsWin81orLater() && (m_VideoDriverVersion & 0xffff00000000) == 0 && (m_VideoDriverVersion & 0xffff) == 0) {
-				// fix bug in GetAdapterIdentifier()
-				m_VideoDriverVersion = (m_VideoDriverVersion & 0xffff000000000000) | ((m_VideoDriverVersion & 0xffff0000) << 16) | 0xffffffff;
+	if (!s_cachedGpu.inited) {
+		auto pD3D9 = D3D9Helper::Direct3DCreate9();
+		if (pD3D9) {
+			D3DADAPTER_IDENTIFIER9 AdapID9 = {};
+			if (pD3D9->GetAdapterIdentifier(D3D9Helper::GetAdapter(pD3D9, hWnd), 0, &AdapID9) == S_OK) {
+				s_cachedGpu.nPCIVendor         = AdapID9.VendorId;
+				s_cachedGpu.nPCIDevice         = AdapID9.DeviceId;
+				s_cachedGpu.VideoDriverVersion = AdapID9.DriverVersion.QuadPart;
+				if (SysVersion::IsWin81orLater() && (s_cachedGpu.VideoDriverVersion & 0xffff00000000) == 0 && (s_cachedGpu.VideoDriverVersion & 0xffff) == 0) {
+					// fix bug in GetAdapterIdentifier()
+					s_cachedGpu.VideoDriverVersion = (s_cachedGpu.VideoDriverVersion & 0xffff000000000000) | ((s_cachedGpu.VideoDriverVersion & 0xffff0000) << 16) | 0xffffffff;
+				}
+				s_cachedGpu.strDeviceDescription.Format(L"%hs (%04X:%04X)", AdapID9.Description, s_cachedGpu.nPCIVendor, s_cachedGpu.nPCIDevice);
 			}
-			m_strDeviceDescription.Format(L"%hs (%04X:%04X)", AdapID9.Description, m_nPCIVendor, m_nPCIDevice);
+			pD3D9->Release();
 		}
-
-		pD3D9->Release();
+		s_cachedGpu.inited = true;
 	}
+
+	m_nPCIVendor         = s_cachedGpu.nPCIVendor;
+	m_nPCIDevice         = s_cachedGpu.nPCIDevice;
+	m_VideoDriverVersion = s_cachedGpu.VideoDriverVersion;
+	m_strDeviceDescription = s_cachedGpu.strDeviceDescription;
 }
 
 REFERENCE_TIME CMPCVideoDecFilter::GetFrameDuration()
@@ -3978,6 +3995,7 @@ HRESULT CMPCVideoDecFilter::DecodeInternal(AVPacket *avpkt, REFERENCE_TIME rtSta
 		AddFrameSideData(pOut, m_pFrame);
 
 		hr = m_pOutput->Deliver(pOut);
+		PerfTimer::LogFirstFrame(L"MPCVideoDec: Delivered first frame to video renderer");
 
 		av_frame_unref(frame);
 
