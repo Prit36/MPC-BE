@@ -4862,8 +4862,10 @@ void CMainFrame::OnFilePostCloseMedia()
 
 	if (IsWindow(m_wndCaptureBar.m_hWnd)) {
 		ShowControlBarInternal(&m_wndCaptureBar, FALSE);
-		m_wndCaptureBar.m_capdlg.SetupVideoControls(L"", nullptr, nullptr, nullptr);
-		m_wndCaptureBar.m_capdlg.SetupAudioControls(L"", nullptr, std::vector<CComQIPtr<IAMAudioInputMixer>>());
+		if (::IsWindow(m_wndCaptureBar.m_capdlg.GetSafeHwnd())) {
+			m_wndCaptureBar.m_capdlg.SetupVideoControls(L"", nullptr, nullptr, nullptr);
+			m_wndCaptureBar.m_capdlg.SetupAudioControls(L"", nullptr, std::vector<CComQIPtr<IAMAudioInputMixer>>());
+		}
 	}
 
 	RecalcLayout();
