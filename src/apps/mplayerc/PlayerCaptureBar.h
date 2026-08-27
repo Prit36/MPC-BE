@@ -37,9 +37,8 @@ public:
 	virtual ~CPlayerCaptureBar();
 
 	BOOL Create(CWnd* pParentWnd, UINT defDockBarID);
-
 	virtual void ReloadTranslatableResources();
-
+	void EnsureDialogCreated();
 	void InitControls();
 
 protected:

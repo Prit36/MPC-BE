@@ -685,10 +685,11 @@ CMainFrame::~CMainFrame()
 
 int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 {
-	PerfTimer::Log(L"CMainFrame::OnCreate enter");
+	PerfTimer::Log(L"OnCreate: start");
 	if (__super::OnCreate(lpCreateStruct) == -1) {
 		return -1;
 	}
+	PerfTimer::Log(L"OnCreate: after __super::OnCreate");
 
 	UseCurentMonitorDPI(m_hWnd);
 
@@ -704,6 +705,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	SetColorTitle();
 
+	PerfTimer::Log(L"OnCreate: before loading menus");
 	m_popupMenu.LoadMenuW(IDR_POPUP);
 	m_popupMainMenu.LoadMenuW(IDR_POPUPMAIN);
 
@@ -712,6 +714,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	m_ShadersMenu.LoadMenuW(IDR_POPUP_SHADERS);
 	m_AfterPlaybackMenu.LoadMenuW(IDR_POPUP_AFTERPLAYBACK);
 	m_NavigateMenu.LoadMenuW(IDR_POPUP_NAVIGATE);
+	PerfTimer::Log(L"OnCreate: after loading menus");
 
 	// create a Main View Window
 	if (!m_wndView.Create(nullptr, nullptr, AFX_WS_DEFAULT_VIEW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
@@ -723,6 +726,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	// Should never be RTLed
 	m_wndView.ModifyStyleEx(WS_EX_LAYOUTRTL, WS_EX_NOINHERITLAYOUT);
 
+	PerfTimer::Log(L"OnCreate: before FlyBar/OSD/Preview");
 	// Create FlyBar Window
 	CreateFlyBar();
 	// Create OSD Window
@@ -737,6 +741,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		m_wndPreView.ShowWindow(SW_HIDE);
 		m_wndPreView.SetRelativeSize(s.iSmartSeekSize);
 	}
+	PerfTimer::Log(L"OnCreate: after FlyBar/OSD/Preview");
 
 	if (__argc <= 1) {
 		CComPtr<IWICBitmap> pBitmap;
@@ -746,6 +751,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		}
 	}
 
+	PerfTimer::Log(L"OnCreate: before static bars");
 	// static bars
 	BOOL bResult = m_wndStatusBar.Create(this);
 	if (bResult) {
@@ -764,6 +770,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		DLog(L"Failed to create all control bars");
 		return -1;      // fail to create
 	}
+	PerfTimer::Log(L"OnCreate: after static bars");
 
 	m_pFullscreenWnd = DNew CFullscreenWnd(this);
 
@@ -781,12 +788,14 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	m_dockingbars.clear();
 
+	PerfTimer::Log(L"OnCreate: before SubresyncBar");
 	m_wndSubresyncBar.Create(this, AFX_IDW_DOCKBAR_TOP, &m_csSubLock);
 	m_wndSubresyncBar.SetBarStyle(m_wndSubresyncBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
 	m_wndSubresyncBar.EnableDocking(CBRS_ALIGN_ANY);
 	m_wndSubresyncBar.SetHeight(200);
 	m_dockingbars.emplace_back(&m_wndSubresyncBar);
 
+	PerfTimer::Log(L"OnCreate: before PlaylistBar");
 	m_wndPlaylistBar.Create(this, AFX_IDW_DOCKBAR_RIGHT);
 	m_wndPlaylistBar.SetBarStyle(m_wndPlaylistBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
 	m_wndPlaylistBar.EnableDocking(CBRS_ALIGN_ANY);
@@ -833,7 +842,9 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	GetDesktopWindow()->GetWindowRect(&m_rcDesktop);
 
+	PerfTimer::Log(L"OnCreate: before ShowControls");
 	ShowControls(s.nCS);
+	PerfTimer::Log(L"OnCreate: after ShowControls");
 
 	SetAlwaysOnTop(s.iOnTop);
 
@@ -841,10 +852,12 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	SetFocus();
 
+	PerfTimer::Log(L"OnCreate: before GraphThread");
 	m_pGraphThread = (CGraphThread*)AfxBeginThread(RUNTIME_CLASS(CGraphThread));
 	if (m_pGraphThread) {
 		m_pGraphThread->SetMainFrame(this);
 	}
+	PerfTimer::Log(L"OnCreate: after GraphThread");
 
 	if (s.nCmdlnWebServerPort != 0) {
 		if (s.nCmdlnWebServerPort > 0) {
@@ -4535,6 +4548,7 @@ void CMainFrame::OnFilePostOpenMedia(std::unique_ptr<OpenMediaData>& pOMD)
 	}
 
 	if (OpenDeviceData *pDeviceData = dynamic_cast<OpenDeviceData*>(m_lastOMD.get())) {
+		m_wndCaptureBar.EnsureDialogCreated();
 		m_wndCaptureBar.m_capdlg.SetVideoInput(pDeviceData->vinput);
 		m_wndCaptureBar.m_capdlg.SetVideoChannel(pDeviceData->vchannel);
 		m_wndCaptureBar.m_capdlg.SetAudioInput(pDeviceData->ainput);
@@ -7568,6 +7582,7 @@ void CMainFrame::OnUpdateViewPlaylist(CCmdUI* pCmdUI)
 // Navigation menu
 void CMainFrame::OnViewNavigation()
 {
+	m_wndNavigationBar.EnsureDialogCreated();
 	CAppSettings& s = AfxGetAppSettings();
 	s.fHideNavigation = !s.fHideNavigation;
 	m_wndNavigationBar.m_navdlg.UpdateElementList();
@@ -7585,17 +7600,19 @@ void CMainFrame::OnUpdateViewNavigation(CCmdUI* pCmdUI)
 
 void CMainFrame::OnViewCapture()
 {
+	m_wndCaptureBar.EnsureDialogCreated();
 	ShowControlBarInternal(&m_wndCaptureBar, !m_wndCaptureBar.IsWindowVisible());
 }
 
 void CMainFrame::OnUpdateViewCapture(CCmdUI* pCmdUI)
 {
-	pCmdUI->SetCheck(m_wndCaptureBar.IsWindowVisible());
+	pCmdUI->SetCheck(m_wndCaptureBar.m_hWnd && m_wndCaptureBar.IsWindowVisible());
 	pCmdUI->Enable(m_eMediaLoadState == MLS_LOADED && GetPlaybackMode() == PM_CAPTURE);
 }
 
 void CMainFrame::OnViewShaderEditor()
 {
+	m_wndShaderEditorBar.EnsureDialogCreated();
 	if (m_wndShaderEditorBar.IsWindowVisible()) {
 		SetShaders(); // reset shaders
 	} else {
@@ -7606,7 +7623,7 @@ void CMainFrame::OnViewShaderEditor()
 
 void CMainFrame::OnUpdateViewShaderEditor(CCmdUI* pCmdUI)
 {
-	pCmdUI->SetCheck(m_wndShaderEditorBar.IsWindowVisible());
+	pCmdUI->SetCheck(m_wndShaderEditorBar.m_hWnd && m_wndShaderEditorBar.IsWindowVisible());
 	pCmdUI->Enable(TRUE);
 }
 
@@ -18365,9 +18382,15 @@ afx_msg void CMainFrame::OnLanguage(UINT nID)
 	CreateThumbnailToolbar();
 
 	m_wndSubresyncBar.ReloadTranslatableResources();
-	m_wndCaptureBar.ReloadTranslatableResources();
-	m_wndNavigationBar.ReloadTranslatableResources();
-	m_wndShaderEditorBar.ReloadTranslatableResources();
+	if (m_wndCaptureBar.m_hWnd) {
+		m_wndCaptureBar.ReloadTranslatableResources();
+	}
+	if (m_wndNavigationBar.m_hWnd) {
+		m_wndNavigationBar.ReloadTranslatableResources();
+	}
+	if (m_wndShaderEditorBar.m_hWnd) {
+		m_wndShaderEditorBar.ReloadTranslatableResources();
+	}
 	m_wndPlaylistBar.ReloadTranslatableResources();
 
 	m_wndInfoBar.RemoveAllLines();

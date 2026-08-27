@@ -36,6 +36,22 @@ CPlayerNavigationBar::~CPlayerNavigationBar()
 {
 }
 
+void CPlayerNavigationBar::EnsureDialogCreated()
+{
+	if (!m_navdlg.m_hWnd) {
+		m_navdlg.Create(this);
+		m_navdlg.ShowWindow(SW_SHOWNORMAL);
+
+		CRect r;
+		m_navdlg.GetWindowRect(r);
+		m_szMinVert = m_szVert = r.Size();
+		m_szMinHorz = m_szHorz = r.Size();
+		m_szMinFloat = m_szFloat = r.Size();
+		m_bFixedFloat = true;
+		m_szFixedFloat = r.Size();
+	}
+}
+
 BOOL CPlayerNavigationBar::Create(CWnd* pParentWnd, UINT defDockBarID)
 {
 	if (!CPlayerBar::Create(ResStr(IDS_NAVIGATION_BAR), pParentWnd, ID_VIEW_NAVIGATION, defDockBarID, L"NavigationBar")) {
@@ -43,16 +59,11 @@ BOOL CPlayerNavigationBar::Create(CWnd* pParentWnd, UINT defDockBarID)
 	}
 
 	m_pParent = pParentWnd;
-	m_navdlg.Create(this);
-	m_navdlg.ShowWindow(SW_SHOWNORMAL);
-
-	CRect r;
-	m_navdlg.GetWindowRect(r);
-	m_szMinVert = m_szVert = r.Size();
-	m_szMinHorz = m_szHorz = r.Size();
-	m_szMinFloat = m_szFloat = r.Size();
+	m_szMinVert = m_szVert = CSize(200, 200);
+	m_szMinHorz = m_szHorz = CSize(200, 200);
+	m_szMinFloat = m_szFloat = CSize(200, 200);
 	m_bFixedFloat = true;
-	m_szFixedFloat = r.Size();
+	m_szFixedFloat = CSize(200, 200);
 
 	return TRUE;
 }

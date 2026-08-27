@@ -169,7 +169,7 @@ void CFGFilterRegistry::QueryProperties()
 CFGFilterRegistry::CFGFilterRegistry(const CLSID& clsid, UINT64 merit)
 	: CFGFilter(clsid, L"", merit)
 {
-	if (m_clsid == GUID_NULL) {
+	if (m_clsid == GUID_NULL || merit == MERIT64_DO_NOT_USE) {
 		return;
 	}
 

@@ -35,28 +35,40 @@ CPlayerCaptureBar::~CPlayerCaptureBar()
 {
 }
 
+void CPlayerCaptureBar::EnsureDialogCreated()
+{
+	if (!m_capdlg.m_hWnd) {
+		m_capdlg.Create(this);
+		m_capdlg.ShowWindow(SW_SHOWNORMAL);
+
+		CRect r;
+		m_capdlg.GetWindowRect(r);
+		m_szMinVert = m_szVert = r.Size();
+		m_szMinHorz = m_szHorz = r.Size();
+		m_szMinFloat = m_szFloat = r.Size();
+		m_bFixedFloat = true;
+		m_szFixedFloat = r.Size();
+	}
+}
+
 BOOL CPlayerCaptureBar::Create(CWnd* pParentWnd, UINT defDockBarID)
 {
 	if (!__super::Create(ResStr(IDS_CAPTURE_SETTINGS), pParentWnd, ID_VIEW_CAPTURE, defDockBarID, L"CaptureSettings")) {
 		return FALSE;
 	}
 
-	m_capdlg.Create(this);
-	m_capdlg.ShowWindow(SW_SHOWNORMAL);
-
-	CRect r;
-	m_capdlg.GetWindowRect(r);
-	m_szMinVert = m_szVert = r.Size();
-	m_szMinHorz = m_szHorz = r.Size();
-	m_szMinFloat = m_szFloat = r.Size();
+	m_szMinVert = m_szVert = CSize(300, 200);
+	m_szMinHorz = m_szHorz = CSize(300, 200);
+	m_szMinFloat = m_szFloat = CSize(300, 200);
 	m_bFixedFloat = true;
-	m_szFixedFloat = r.Size();
+	m_szFixedFloat = CSize(300, 200);
 
 	return TRUE;
 }
 
 void CPlayerCaptureBar::InitControls()
 {
+	EnsureDialogCreated();
 	m_capdlg.InitControls();
 }
 

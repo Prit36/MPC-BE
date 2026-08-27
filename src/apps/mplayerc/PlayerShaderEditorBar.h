@@ -35,8 +35,8 @@ public:
 	virtual ~CPlayerShaderEditorBar();
 
 	BOOL Create(CWnd* pParentWnd, UINT defDockBarID);
-
 	virtual void ReloadTranslatableResources();
+	void EnsureDialogCreated();
 
 public:
 	CShaderEditorDlg m_dlg;

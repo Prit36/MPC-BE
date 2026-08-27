@@ -35,20 +35,30 @@ CPlayerShaderEditorBar::~CPlayerShaderEditorBar()
 {
 }
 
+void CPlayerShaderEditorBar::EnsureDialogCreated()
+{
+	if (!m_dlg.m_hWnd) {
+		m_dlg.Create(this);
+		m_dlg.ShowWindow(SW_SHOWNORMAL);
+
+		CRect r;
+		m_dlg.GetWindowRect(r);
+		m_szMinVert = m_szVert = r.Size();
+		m_szMinHorz = m_szHorz = r.Size();
+		m_szMinFloat = m_szFloat = r.Size();
+		m_bFixedFloat = false;
+	}
+}
+
 BOOL CPlayerShaderEditorBar::Create(CWnd* pParentWnd, UINT defDockBarID)
 {
 	if (!__super::Create(ResStr(IDS_SHADER_EDITOR), pParentWnd, ID_VIEW_SHADEREDITOR, defDockBarID, L"ShaderEditor")) {
 		return FALSE;
 	}
 
-	m_dlg.Create(this);
-	m_dlg.ShowWindow(SW_SHOWNORMAL);
-
-	CRect r;
-	m_dlg.GetWindowRect(r);
-	m_szMinVert = m_szVert = r.Size();
-	m_szMinHorz = m_szHorz = r.Size();
-	m_szMinFloat = m_szFloat = r.Size();
+	m_szMinVert = m_szVert = CSize(300, 200);
+	m_szMinHorz = m_szHorz = CSize(300, 200);
+	m_szMinFloat = m_szFloat = CSize(300, 200);
 	m_bFixedFloat = false;
 
 	return TRUE;

@@ -58,19 +58,22 @@ public:
 		CAppSettings& s = AfxGetAppSettings();
 
 		// Get supported MEDIASUBTYPE_ from decoder
-		MPCVideoDec::FORMATS fmts;
-		MPCVideoDec::GetSupportedFormatList(fmts);
+		static const MPCVideoDec::FORMATS s_fmts = []() {
+			MPCVideoDec::FORMATS f;
+			MPCVideoDec::GetSupportedFormatList(f);
+			return f;
+		}();
 
 		if (m_merit >= MERIT64_ABOVE_DSHOW) {
 			// High merit MPC Video Decoder
-			for (const auto& fmt : fmts) {
+			for (const auto& fmt : s_fmts) {
 				if (m_bIsPreview || s.VideoFilters[fmt.FFMPEGCode]) {
 					AddType(*fmt.clsMajorType, *fmt.clsMinorType);
 				}
 			}
 		} else if (!m_bIsPreview) {
 			// Low merit MPC Video Decoder
-			for (const auto& fmt : fmts) {
+			for (const auto& fmt : s_fmts) {
 				AddType(*fmt.clsMajorType, *fmt.clsMinorType);
 			}
 		}
@@ -1084,6 +1087,7 @@ HRESULT CFGManager::ConnectInternal(IPin* pPinOut, IPin* pPinIn, bool bContinueR
 			CComPtr<IBaseFilter> pBF;
 			std::list<CComQIPtr<IUnknown, &IID_IUnknown>> pUnks;
 			hr = pFGF->Create(&pBF, pUnks);
+			PerfTimer::Log(L"ConnectInternal: pFGF->Create returned");
 			if (FAILED(hr)) {
 				// Check if selected video renderer fails to load
 				CLSID filter = pFGF->GetCLSID();
