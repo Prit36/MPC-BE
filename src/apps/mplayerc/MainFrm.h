@@ -143,6 +143,7 @@ class CMainFrame : public CFrameWnd, public CDropTarget, public CDPI
 	friend class CPPageSync;
 	friend class CPPageVideo;
 	friend class CMediaControls;
+	friend class CPlayerSeekBar;
 
 	// TODO: wrap these graph objects into a class to make it look cleaner
 
@@ -273,6 +274,7 @@ class CMainFrame : public CFrameWnd, public CDropTarget, public CDPI
 	CMenu m_AfterPlaybackMenu;
 	CMenu m_NavigateMenu;
 	void EnsureMenusLoaded();
+	void EnsurePreViewCreated();
 
 	// dynamic menus
 	void MakeEmptySubMenu(CMenu& menu);

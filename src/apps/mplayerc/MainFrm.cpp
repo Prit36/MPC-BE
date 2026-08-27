@@ -733,13 +733,15 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	}
 
 	// Create Preview Window
-	if (!m_wndPreView.CreateEx(WS_EX_TOPMOST, AfxRegisterWndClass(0), nullptr, WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, CRect(0, 0, 160, 109), this, 0)) {
-		DLog(L"Failed to create Preview Window");
-		m_wndView.DestroyWindow();
-		return -1;
-	} else {
-		m_wndPreView.ShowWindow(SW_HIDE);
-		m_wndPreView.SetRelativeSize(s.iSmartSeekSize);
+	if (!bHasCmdLineFiles) {
+		if (!m_wndPreView.CreateEx(WS_EX_TOPMOST, AfxRegisterWndClass(0), nullptr, WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, CRect(0, 0, 160, 109), this, 0)) {
+			DLog(L"Failed to create Preview Window");
+			m_wndView.DestroyWindow();
+			return -1;
+		} else {
+			m_wndPreView.ShowWindow(SW_HIDE);
+			m_wndPreView.SetRelativeSize(s.iSmartSeekSize);
+		}
 	}
 
 	if (__argc <= 1) {
@@ -4430,6 +4432,18 @@ void CMainFrame::EnsureMenusLoaded()
 		m_ShadersMenu.LoadMenuW(IDR_POPUP_SHADERS);
 		m_AfterPlaybackMenu.LoadMenuW(IDR_POPUP_AFTERPLAYBACK);
 		m_NavigateMenu.LoadMenuW(IDR_POPUP_NAVIGATE);
+	}
+}
+
+void CMainFrame::EnsurePreViewCreated()
+{
+	if (!::IsWindow(m_wndPreView.GetSafeHwnd())) {
+		const auto& s = AfxGetAppSettings();
+		if (m_wndPreView.CreateEx(WS_EX_TOPMOST, AfxRegisterWndClass(0), nullptr, WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, CRect(0, 0, 160, 109), this, 0)) {
+			m_wndPreView.ShowWindow(SW_HIDE);
+			m_wndPreView.SetRelativeSize(s.iSmartSeekSize);
+			m_wndPreView.SetColor();
+		}
 	}
 }
 
@@ -19802,6 +19816,7 @@ CString CMainFrame::FillMessage()
 
 bool CMainFrame::EnsurePreviewGraph()
 {
+	EnsurePreViewCreated();
 	if (m_pGB_preview) {
 		return true;
 	}

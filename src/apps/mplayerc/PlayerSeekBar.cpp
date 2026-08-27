@@ -906,6 +906,7 @@ void CPlayerSeekBar::UpdateToolTipPosition(CPoint point)
 			return;
 		}
 
+		m_pMainFrame->EnsurePreViewCreated();
 		if (!m_pMainFrame->m_wndPreView.IsWindowVisible()) {
 			m_pMainFrame->m_wndPreView.SetWindowSize();
 		}

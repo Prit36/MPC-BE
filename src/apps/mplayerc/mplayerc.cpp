@@ -38,6 +38,8 @@
 #include "UpdateChecker.h"
 
 #include "Version.h"
+#include <clsids.h>
+#include <d3d11.h>
 #include "DSUtil/PerfTimer.h"
 
 extern "C" {
@@ -982,6 +984,37 @@ BOOL CMPlayerCApp::InitInstance()
 				}
 			}
 		}
+	}
+
+	if (!m_cmdln.empty()) {
+		std::thread([] {
+			CoInitialize(0);
+			CComPtr<IClassFactory> pCF;
+			CoGetClassObject(CLSID_MPCVR, CLSCTX_INPROC_SERVER, nullptr, IID_IClassFactory, (void**)&pCF);
+			HMODULE hD3D11 = LoadLibraryW(L"d3d11.dll");
+			if (hD3D11) {
+				typedef HRESULT (WINAPI *PFN_D3D11_CREATE_DEVICE)(
+					IDXGIAdapter*,
+					D3D_DRIVER_TYPE,
+					HMODULE,
+					UINT,
+					const D3D_FEATURE_LEVEL*,
+					UINT,
+					UINT,
+					ID3D11Device**,
+					D3D_FEATURE_LEVEL*,
+					ID3D11DeviceContext**
+				);
+				PFN_D3D11_CREATE_DEVICE pCreateDevice = (PFN_D3D11_CREATE_DEVICE)GetProcAddress(hD3D11, "D3D11CreateDevice");
+				if (pCreateDevice) {
+					CComPtr<ID3D11Device> pDevice;
+					CComPtr<ID3D11DeviceContext> pContext;
+					D3D_FEATURE_LEVEL flOut;
+					pCreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &pDevice, &flOut, &pContext);
+				}
+			}
+			CoUninitialize();
+		}).detach();
 	}
 
 	// read settings

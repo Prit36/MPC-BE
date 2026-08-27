@@ -305,13 +305,17 @@ HRESULT WicDecodeImage(IWICImagingFactory* pWICFactory, IWICBitmap** ppBitmap, c
 
 HRESULT WicLoadImage(IWICBitmap** ppBitmap, const bool pma, const std::wstring_view filename)
 {
+	if (filename.empty()) {
+		return E_INVALIDARG;
+	}
+
+	if (!::PathFileExistsW(filename.data())) {
+		return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+	}
+
 	IWICImagingFactory* pWICFactory = CWICImagingFactory::GetInstance().GetFactory();
 	if (!pWICFactory) {
 		return E_NOINTERFACE;
-	}
-
-	if (filename.empty()) {
-		return E_INVALIDARG;
 	}
 
 	CComPtr<IWICBitmapDecoder> pDecoder;
