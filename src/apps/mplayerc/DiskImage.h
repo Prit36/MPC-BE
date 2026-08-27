@@ -29,6 +29,7 @@ private:
 
 	DriveType	m_DriveType = NONE;
 	WCHAR		m_DriveLetter = 0;
+	bool		m_bInited = false;
 
 	// Windows 8 VirtualDisk
 	HMODULE		m_hVirtualDiskModule = nullptr;

@@ -705,16 +705,13 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	SetColorTitle();
 
-	PerfTimer::Log(L"OnCreate: before loading menus");
-	m_popupMenu.LoadMenuW(IDR_POPUP);
-	m_popupMainMenu.LoadMenuW(IDR_POPUPMAIN);
+	const bool bHasCmdLineFiles = (__argc > 1);
 
-	m_VideoFrameMenu.LoadMenuW(IDR_POPUP_VIDEOFRAME);
-	m_PanScanMenu.LoadMenuW(IDR_POPUP_PANSCAN);
-	m_ShadersMenu.LoadMenuW(IDR_POPUP_SHADERS);
-	m_AfterPlaybackMenu.LoadMenuW(IDR_POPUP_AFTERPLAYBACK);
-	m_NavigateMenu.LoadMenuW(IDR_POPUP_NAVIGATE);
-	PerfTimer::Log(L"OnCreate: after loading menus");
+	if (!bHasCmdLineFiles) {
+		PerfTimer::Log(L"OnCreate: before loading menus");
+		EnsureMenusLoaded();
+		PerfTimer::Log(L"OnCreate: after loading menus");
+	}
 
 	// create a Main View Window
 	if (!m_wndView.Create(nullptr, nullptr, AFX_WS_DEFAULT_VIEW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
@@ -726,11 +723,14 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	// Should never be RTLed
 	m_wndView.ModifyStyleEx(WS_EX_LAYOUTRTL, WS_EX_NOINHERITLAYOUT);
 
-	PerfTimer::Log(L"OnCreate: before FlyBar/OSD/Preview");
-	// Create FlyBar Window
-	CreateFlyBar();
-	// Create OSD Window
-	CreateOSDBar();
+	if (!bHasCmdLineFiles) {
+		PerfTimer::Log(L"OnCreate: before FlyBar/OSD/Preview");
+		// Create FlyBar Window
+		CreateFlyBar();
+		// Create OSD Window
+		CreateOSDBar();
+		PerfTimer::Log(L"OnCreate: after FlyBar/OSD/Preview");
+	}
 
 	// Create Preview Window
 	if (!m_wndPreView.CreateEx(WS_EX_TOPMOST, AfxRegisterWndClass(0), nullptr, WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, CRect(0, 0, 160, 109), this, 0)) {
@@ -741,7 +741,6 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		m_wndPreView.ShowWindow(SW_HIDE);
 		m_wndPreView.SetRelativeSize(s.iSmartSeekSize);
 	}
-	PerfTimer::Log(L"OnCreate: after FlyBar/OSD/Preview");
 
 	if (__argc <= 1) {
 		CComPtr<IWICBitmap> pBitmap;
@@ -802,7 +801,6 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	m_wndPlaylistBar.SetHeight(100);
 	m_dockingbars.emplace_back(&m_wndPlaylistBar);
 
-	const bool bHasCmdLineFiles = (__argc > 1);
 	if (!bHasCmdLineFiles) {
 		std::vector<CStringW> recentPath;
 		AfxGetMyApp()->m_HistoryFile.GetRecentPaths(recentPath, 1);
@@ -892,23 +890,23 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		DwmIsCompositionEnabled(&m_bDesktopCompositionEnabled);
 	}
 
-	PerfTimer::Log(L"OnCreate: before loading SVGs");
-	bool ok = m_svgFlybar.Load(::GetProgramDir() + L"flybar.svg");
-	if (!ok) {
-		ok = m_svgFlybar.Load(IDF_SVG_FLYBAR);
+	if (!bHasCmdLineFiles) {
+		PerfTimer::Log(L"OnCreate: before loading SVGs");
+		bool ok = m_svgFlybar.Load(::GetProgramDir() + L"flybar.svg");
+		if (!ok) {
+			ok = m_svgFlybar.Load(IDF_SVG_FLYBAR);
+		}
+		m_wndFlyBar.UpdateButtonImages();
+		m_OSD.UpdateButtonImages();
+
+		ok = m_svgTaskbarButtons.Load(IDF_SVG_TASKBAR_BUTTONS);
+		PerfTimer::Log(L"OnCreate: after loading SVGs");
+
+		// Windows 8 - if app is not pinned on the taskbar, it's not receive "TaskbarButtonCreated" message. Bug ???
+		if (SysVersion::IsWin8orLater()) {
+			CreateThumbnailToolbar();
+		}
 	}
-	m_wndFlyBar.UpdateButtonImages();
-	m_OSD.UpdateButtonImages();
-
-	ok = m_svgTaskbarButtons.Load(IDF_SVG_TASKBAR_BUTTONS);
-	PerfTimer::Log(L"OnCreate: after loading SVGs");
-
-	// Windows 8 - if app is not pinned on the taskbar, it's not receive "TaskbarButtonCreated" message. Bug ???
-	if (SysVersion::IsWin8orLater()) {
-		CreateThumbnailToolbar();
-	}
-
-	m_DiskImage.Init();
 
 	if (s.fAutoReloadExtSubtitles) {
 		subChangeNotifyThreadStart();
@@ -1699,7 +1697,18 @@ void CMainFrame::CreateFlyBar()
 bool CMainFrame::FlyBarSetPos()
 {
 	if (!m_wndFlyBar || !(::IsWindow(m_wndFlyBar.GetSafeHwnd()))) {
-		return false;
+		if (AfxGetAppSettings().fFlybar && (m_bFullScreen || AfxGetAppSettings().iCaptionMenuMode == MODE_FRAMEONLY || AfxGetAppSettings().iCaptionMenuMode == MODE_BORDERLESS)) {
+			CreateFlyBar();
+			if (!m_svgFlybar.IsLoad()) {
+				bool ok = m_svgFlybar.Load(::GetProgramDir() + L"flybar.svg");
+				if (!ok) {
+					ok = m_svgFlybar.Load(IDF_SVG_FLYBAR);
+				}
+				m_wndFlyBar.UpdateButtonImages();
+			}
+		} else {
+			return false;
+		}
 	}
 
 	if (m_bIsMadVRExclusiveMode || m_bIsMPCVRExclusiveMode || !m_wndView.IsWindowVisible()) {
@@ -1748,12 +1757,8 @@ bool CMainFrame::FlyBarSetPos()
 			if (s.fFlybarOnTop && !m_wndFlyBar.IsWindowVisible()) {
 				m_wndFlyBar.ShowWindow(SW_SHOWNOACTIVATE);
 			}
-			return true;
-		} else {
-			if (m_wndFlyBar.IsWindowVisible()) {
-				m_wndFlyBar.ShowWindow(SW_HIDE);
-			}
 		}
+		return true;
 	} else {
 		if (m_wndFlyBar.IsWindowVisible()) {
 			m_wndFlyBar.ShowWindow(SW_HIDE);
@@ -1784,7 +1789,11 @@ void CMainFrame::CreateOSDBar()
 
 bool CMainFrame::OSDBarSetPos()
 {
-	if (!m_OSD || !(::IsWindow(m_OSD.GetSafeHwnd())) || m_OSD.GetOSDType() != OSD_TYPE_GDI) {
+	if (!m_OSD || !(::IsWindow(m_OSD.GetSafeHwnd()))) {
+		CreateOSDBar();
+		m_OSD.UpdateButtonImages();
+	}
+	if (m_OSD.GetOSDType() != OSD_TYPE_GDI) {
 		return false;
 	}
 
@@ -4411,8 +4420,22 @@ void CMainFrame::OnUnInitMenuPopup(CMenu* pPopupMenu, UINT nFlags)
 	m_bLeftMouseDown = FALSE;
 }
 
+void CMainFrame::EnsureMenusLoaded()
+{
+	if (!m_popupMenu.m_hMenu) {
+		m_popupMenu.LoadMenuW(IDR_POPUP);
+		m_popupMainMenu.LoadMenuW(IDR_POPUPMAIN);
+		m_VideoFrameMenu.LoadMenuW(IDR_POPUP_VIDEOFRAME);
+		m_PanScanMenu.LoadMenuW(IDR_POPUP_PANSCAN);
+		m_ShadersMenu.LoadMenuW(IDR_POPUP_SHADERS);
+		m_AfterPlaybackMenu.LoadMenuW(IDR_POPUP_AFTERPLAYBACK);
+		m_NavigateMenu.LoadMenuW(IDR_POPUP_NAVIGATE);
+	}
+}
+
 BOOL CMainFrame::OnMenu(CMenu* pMenu)
 {
+	EnsureMenusLoaded();
 	CheckPointer(pMenu, FALSE);
 
 	// skip empty menu
@@ -4438,16 +4461,19 @@ BOOL CMainFrame::OnMenu(CMenu* pMenu)
 
 void CMainFrame::OnMenuPlayerShort()
 {
+	EnsureMenusLoaded();
 	OnMenu(m_popupMainMenu.GetSubMenu(0));
 }
 
 void CMainFrame::OnMenuPlayerLong()
 {
+	EnsureMenusLoaded();
 	OnMenu(m_popupMenu.GetSubMenu(0));
 }
 
 void CMainFrame::OnMenuFilters()
 {
+	EnsureMenusLoaded();
 	SetupFiltersSubMenu();
 	OnMenu(&m_filtersMenu);
 }
@@ -19104,6 +19130,10 @@ void CMainFrame::OnFileOpenDirectory()
 
 HRESULT CMainFrame::CreateThumbnailToolbar()
 {
+	if (!m_svgTaskbarButtons.IsLoad()) {
+		m_svgTaskbarButtons.Load(IDF_SVG_TASKBAR_BUTTONS);
+	}
+
 	if (!AfxGetAppSettings().fUseWin7TaskBar || !m_svgTaskbarButtons.IsLoad()) {
 		return E_FAIL;
 	}

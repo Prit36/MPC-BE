@@ -272,6 +272,7 @@ class CMainFrame : public CFrameWnd, public CDropTarget, public CDPI
 	CMenu m_ShadersMenu;
 	CMenu m_AfterPlaybackMenu;
 	CMenu m_NavigateMenu;
+	void EnsureMenusLoaded();
 
 	// dynamic menus
 	void MakeEmptySubMenu(CMenu& menu);

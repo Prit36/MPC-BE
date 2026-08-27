@@ -1286,20 +1286,40 @@ void CMPCVideoDecFilter::DetectVideoCard(HWND hWnd)
 	} s_cachedGpu;
 
 	if (!s_cachedGpu.inited) {
-		auto pD3D9 = D3D9Helper::Direct3DCreate9();
-		if (pD3D9) {
-			D3DADAPTER_IDENTIFIER9 AdapID9 = {};
-			if (pD3D9->GetAdapterIdentifier(D3D9Helper::GetAdapter(pD3D9, hWnd), 0, &AdapID9) == S_OK) {
-				s_cachedGpu.nPCIVendor         = AdapID9.VendorId;
-				s_cachedGpu.nPCIDevice         = AdapID9.DeviceId;
-				s_cachedGpu.VideoDriverVersion = AdapID9.DriverVersion.QuadPart;
-				if (SysVersion::IsWin81orLater() && (s_cachedGpu.VideoDriverVersion & 0xffff00000000) == 0 && (s_cachedGpu.VideoDriverVersion & 0xffff) == 0) {
-					// fix bug in GetAdapterIdentifier()
-					s_cachedGpu.VideoDriverVersion = (s_cachedGpu.VideoDriverVersion & 0xffff000000000000) | ((s_cachedGpu.VideoDriverVersion & 0xffff0000) << 16) | 0xffffffff;
+		if (SysVersion::IsWin8orLater()) {
+			IDXGIFactory1* pDXGIFactory1 = CDXGIFactory1::GetInstance().GetFactory();
+			if (pDXGIFactory1) {
+				CComPtr<IDXGIAdapter1> pAdapter;
+				if (SUCCEEDED(pDXGIFactory1->EnumAdapters1(0, &pAdapter)) && pAdapter) {
+					DXGI_ADAPTER_DESC1 desc1 = {};
+					if (SUCCEEDED(pAdapter->GetDesc1(&desc1))) {
+						s_cachedGpu.nPCIVendor = desc1.VendorId;
+						s_cachedGpu.nPCIDevice = desc1.DeviceId;
+						LARGE_INTEGER uimdver = {};
+						if (SUCCEEDED(pAdapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &uimdver))) {
+							s_cachedGpu.VideoDriverVersion = uimdver.QuadPart;
+						}
+						s_cachedGpu.strDeviceDescription.Format(L"%s (%04X:%04X)", desc1.Description, s_cachedGpu.nPCIVendor, s_cachedGpu.nPCIDevice);
+					}
 				}
-				s_cachedGpu.strDeviceDescription.Format(L"%hs (%04X:%04X)", AdapID9.Description, s_cachedGpu.nPCIVendor, s_cachedGpu.nPCIDevice);
 			}
-			pD3D9->Release();
+		}
+		if (s_cachedGpu.nPCIVendor == 0) {
+			auto pD3D9 = D3D9Helper::Direct3DCreate9();
+			if (pD3D9) {
+				D3DADAPTER_IDENTIFIER9 AdapID9 = {};
+				if (pD3D9->GetAdapterIdentifier(D3D9Helper::GetAdapter(pD3D9, hWnd), 0, &AdapID9) == S_OK) {
+					s_cachedGpu.nPCIVendor         = AdapID9.VendorId;
+					s_cachedGpu.nPCIDevice         = AdapID9.DeviceId;
+					s_cachedGpu.VideoDriverVersion = AdapID9.DriverVersion.QuadPart;
+					if (SysVersion::IsWin81orLater() && (s_cachedGpu.VideoDriverVersion & 0xffff00000000) == 0 && (s_cachedGpu.VideoDriverVersion & 0xffff) == 0) {
+						// fix bug in GetAdapterIdentifier()
+						s_cachedGpu.VideoDriverVersion = (s_cachedGpu.VideoDriverVersion & 0xffff000000000000) | ((s_cachedGpu.VideoDriverVersion & 0xffff0000) << 16) | 0xffffffff;
+					}
+					s_cachedGpu.strDeviceDescription.Format(L"%hs (%04X:%04X)", AdapID9.Description, s_cachedGpu.nPCIVendor, s_cachedGpu.nPCIDevice);
+				}
+				pD3D9->Release();
+			}
 		}
 		s_cachedGpu.inited = true;
 	}

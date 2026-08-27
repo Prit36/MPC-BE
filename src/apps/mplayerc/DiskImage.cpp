@@ -43,6 +43,11 @@ CDiskImage::~CDiskImage()
 
 void CDiskImage::Init()
 {
+	if (m_bInited) {
+		return;
+	}
+	m_bInited = true;
+
 	CRegKey key;
 
 #if ENABLE_DTLITE
@@ -108,11 +113,17 @@ void CDiskImage::Init()
 
 bool CDiskImage::DriveAvailable()
 {
+	if (!m_bInited) {
+		Init();
+	}
 	return (m_DriveType > NONE);
 }
 
 const LPCWSTR CDiskImage::GetExts()
 {
+	if (!m_bInited) {
+		Init();
+	}
 	// DAEMON Tools Lite
 	if (m_DriveType == DTLITE) {
 		return L"*.iso;*.nrg;*.mdf;*.isz;*.ccd";
@@ -133,6 +144,9 @@ const LPCWSTR CDiskImage::GetExts()
 
 bool CDiskImage::CheckExtension(LPCWSTR pathName)
 {
+	if (!m_bInited) {
+		Init();
+	}
 	CString ext = GetFileExt(pathName).MakeLower();
 
 	if (CString(pathName).Right(7).MakeLower() == L".iso.wv") {
@@ -159,6 +173,9 @@ bool CDiskImage::CheckExtension(LPCWSTR pathName)
 
 WCHAR CDiskImage::MountDiskImage(LPCWSTR pathName)
 {
+	if (!m_bInited) {
+		Init();
+	}
 	UnmountDiskImage();
 
 	if (::PathFileExistsW(pathName)) {
