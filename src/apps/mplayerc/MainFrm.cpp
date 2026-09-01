@@ -789,13 +789,6 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	m_dockingbars.clear();
 
-	PerfTimer::Log(L"OnCreate: before SubresyncBar");
-	m_wndSubresyncBar.Create(this, AFX_IDW_DOCKBAR_TOP, &m_csSubLock);
-	m_wndSubresyncBar.SetBarStyle(m_wndSubresyncBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
-	m_wndSubresyncBar.EnableDocking(CBRS_ALIGN_ANY);
-	m_wndSubresyncBar.SetHeight(200);
-	m_dockingbars.emplace_back(&m_wndSubresyncBar);
-
 	PerfTimer::Log(L"OnCreate: before PlaylistBar");
 	m_wndPlaylistBar.Create(this, AFX_IDW_DOCKBAR_RIGHT);
 	m_wndPlaylistBar.SetBarStyle(m_wndPlaylistBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
@@ -814,28 +807,18 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		} else {
 			m_wndPlaylistBar.LoadPlaylist(L"");
 		}
-	} else {
-		m_wndPlaylistBar.LoadPlaylist(L"");
+
+		EnsureSubresyncBarCreated();
+		EnsureCaptureBarCreated();
+		EnsureNavigationBarCreated();
+		EnsureShaderEditorBarCreated();
 	}
-
-	m_wndCaptureBar.Create(this, AFX_IDW_DOCKBAR_LEFT);
-	m_wndCaptureBar.SetBarStyle(m_wndCaptureBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
-	m_wndCaptureBar.EnableDocking(CBRS_ALIGN_LEFT|CBRS_ALIGN_RIGHT);
-	m_dockingbars.emplace_back(&m_wndCaptureBar);
-
-	m_wndNavigationBar.Create(this, AFX_IDW_DOCKBAR_LEFT);
-	m_wndNavigationBar.SetBarStyle(m_wndNavigationBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
-	m_wndNavigationBar.EnableDocking(CBRS_ALIGN_LEFT|CBRS_ALIGN_RIGHT);
-	m_dockingbars.emplace_back(&m_wndNavigationBar);
-
-	m_wndShaderEditorBar.Create(this, AFX_IDW_DOCKBAR_TOP);
-	m_wndShaderEditorBar.SetBarStyle(m_wndShaderEditorBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
-	m_wndShaderEditorBar.EnableDocking(CBRS_ALIGN_ANY);
-	m_dockingbars.emplace_back(&m_wndShaderEditorBar);
 
 	// Hide all dockable bars by default
 	for (const auto& pDockingBar : m_dockingbars) {
-		pDockingBar->ShowWindow(SW_HIDE);
+		if (::IsWindow(pDockingBar->GetSafeHwnd())) {
+			pDockingBar->ShowWindow(SW_HIDE);
+		}
 	}
 
 	m_fileDropTarget.Register(this);
@@ -1139,10 +1122,11 @@ DROPEFFECT CMainFrame::OnDragScroll(DWORD dwKeyState, CPoint point)
 void CMainFrame::RestoreControlBars()
 {
 	for (const auto& pDockingBar : m_dockingbars) {
-		CPlayerBar* pBar = dynamic_cast<CPlayerBar*>(pDockingBar);
-
-		if (pBar) {
-			pBar->LoadState(this);
+		if (::IsWindow(pDockingBar->GetSafeHwnd())) {
+			CPlayerBar* pBar = dynamic_cast<CPlayerBar*>(pDockingBar);
+			if (pBar) {
+				pBar->LoadState(this);
+			}
 		}
 	}
 }
@@ -1150,11 +1134,53 @@ void CMainFrame::RestoreControlBars()
 void CMainFrame::SaveControlBars()
 {
 	for (const auto& pDockingBar : m_dockingbars) {
-		CPlayerBar* pBar = dynamic_cast<CPlayerBar*>(pDockingBar);
-
-		if (pBar) {
-			pBar->SaveState();
+		if (::IsWindow(pDockingBar->GetSafeHwnd())) {
+			CPlayerBar* pBar = dynamic_cast<CPlayerBar*>(pDockingBar);
+			if (pBar) {
+				pBar->SaveState();
+			}
 		}
+	}
+}
+
+void CMainFrame::EnsureSubresyncBarCreated()
+{
+	if (!::IsWindow(m_wndSubresyncBar.m_hWnd)) {
+		m_wndSubresyncBar.Create(this, AFX_IDW_DOCKBAR_TOP, &m_csSubLock);
+		m_wndSubresyncBar.SetBarStyle(m_wndSubresyncBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
+		m_wndSubresyncBar.EnableDocking(CBRS_ALIGN_ANY);
+		m_wndSubresyncBar.SetHeight(200);
+		m_dockingbars.emplace_back(&m_wndSubresyncBar);
+	}
+}
+
+void CMainFrame::EnsureCaptureBarCreated()
+{
+	if (!::IsWindow(m_wndCaptureBar.m_hWnd)) {
+		m_wndCaptureBar.Create(this, AFX_IDW_DOCKBAR_LEFT);
+		m_wndCaptureBar.SetBarStyle(m_wndCaptureBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
+		m_wndCaptureBar.EnableDocking(CBRS_ALIGN_LEFT | CBRS_ALIGN_RIGHT);
+		m_dockingbars.emplace_back(&m_wndCaptureBar);
+	}
+}
+
+void CMainFrame::EnsureNavigationBarCreated()
+{
+	if (!::IsWindow(m_wndNavigationBar.m_hWnd)) {
+		m_wndNavigationBar.Create(this, AFX_IDW_DOCKBAR_LEFT);
+		m_wndNavigationBar.SetBarStyle(m_wndNavigationBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
+		m_wndNavigationBar.EnableDocking(CBRS_ALIGN_LEFT | CBRS_ALIGN_RIGHT);
+		m_dockingbars.emplace_back(&m_wndNavigationBar);
+	}
+}
+
+void CMainFrame::EnsureShaderEditorBarCreated()
+{
+	if (!::IsWindow(m_wndShaderEditorBar.m_hWnd)) {
+		m_wndShaderEditorBar.Create(this, AFX_IDW_DOCKBAR_TOP);
+		m_wndShaderEditorBar.SetBarStyle(m_wndShaderEditorBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
+		m_wndShaderEditorBar.EnableDocking(CBRS_ALIGN_ANY);
+		m_dockingbars.emplace_back(&m_wndShaderEditorBar);
 	}
 }
 
@@ -2616,8 +2642,10 @@ void CMainFrame::OnTimer(UINT_PTR nIDEvent)
 					if (g_bExternalSubtitleTime) {
 						m_pCAP->SetTime(rtNow);
 					}
-					m_wndSubresyncBar.SetTime(rtNow);
-					m_wndSubresyncBar.SetFPS(m_pCAP->GetFPS());
+					if (m_wndSubresyncBar.IsWindowVisible()) {
+						m_wndSubresyncBar.SetTime(rtNow);
+						m_wndSubresyncBar.SetFPS(m_pCAP->GetFPS());
+					}
 				}
 
 				if (m_pfnDwmInvalidateIconicBitmaps) {
@@ -11665,6 +11693,7 @@ void CMainFrame::MoveVideoWindow(bool bShowStats/* = false*/, bool bForcedSetVid
 		if (m_bOpening) {
 			if (auto hdc = ::GetDC(m_wndView.GetSafeHwnd())) {
 				m_wndView.SendMessageW(WM_ERASEBKGND, (WPARAM)hdc, 0);
+				::ReleaseDC(m_wndView.GetSafeHwnd(), hdc);
 			}
 		}
 
@@ -13398,6 +13427,10 @@ void CMainFrame::OpenSetupCaptureBar()
 
 void CMainFrame::OpenSetupInfoBar()
 {
+	if (!m_wndInfoBar.IsWindowVisible()) {
+		return;
+	}
+
 	if (GetPlaybackMode() == PM_FILE) {
 		HRESULT hr = E_NOT_SET;
 		bool filled = false;
@@ -13511,6 +13544,10 @@ void CMainFrame::OpenSetupInfoBar()
 
 void CMainFrame::OpenSetupStatsBar()
 {
+	if (!m_wndStatsBar.IsWindowVisible()) {
+		return;
+	}
+
 	CString info('-');
 
 	BeginEnumFilters(m_pGB, pEF, pBF) {
@@ -16780,7 +16817,7 @@ void CMainFrame::SetSubtitle(ISubStream* pSubStream, int iSubtitleSel/* = -1*/, 
 
 		g_bExternalSubtitle = (std::find(m_ExternalSubstreams.cbegin(), m_ExternalSubstreams.cend(), pSubStream) != m_ExternalSubstreams.cend());
 		m_pCAP->SetSubPicProvider(CComQIPtr<ISubPicProvider>(pSubStream));
-		if (s.fUseSybresync) {
+		if (s.fUseSybresync && m_wndSubresyncBar.IsWindowVisible()) {
 			CAutoLock cAutoLock(&m_csSubLock);
 			m_wndSubresyncBar.SetSubtitle(pSubStream, m_pCAP->GetFPS());
 		}
@@ -21097,6 +21134,17 @@ const bool CMainFrame::GetFromClipboard(std::list<CString>& sl) const
 
 void CMainFrame::ShowControlBarInternal(CControlBar* pBar, BOOL bShow)
 {
+	if (bShow) {
+		if (pBar == &m_wndSubresyncBar) EnsureSubresyncBarCreated();
+		else if (pBar == &m_wndCaptureBar) EnsureCaptureBarCreated();
+		else if (pBar == &m_wndNavigationBar) EnsureNavigationBarCreated();
+		else if (pBar == &m_wndShaderEditorBar) EnsureShaderEditorBarCreated();
+	}
+
+	if (!::IsWindow(pBar->GetSafeHwnd())) {
+		if (!bShow) return;
+	}
+
 	if (bShow && m_bFullScreen && m_bIsMPCVRExclusiveMode) {
 		return;
 	}

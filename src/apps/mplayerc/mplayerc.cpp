@@ -988,7 +988,7 @@ BOOL CMPlayerCApp::InitInstance()
 
 	if (!m_cmdln.empty()) {
 		std::thread([] {
-			CoInitialize(0);
+			CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 			CComPtr<IClassFactory> pCF;
 			CoGetClassObject(CLSID_MPCVR, CLSCTX_INPROC_SERVER, nullptr, IID_IClassFactory, (void**)&pCF);
 			HMODULE hD3D11 = LoadLibraryW(L"d3d11.dll");
@@ -1010,9 +1010,22 @@ BOOL CMPlayerCApp::InitInstance()
 					CComPtr<ID3D11Device> pDevice;
 					CComPtr<ID3D11DeviceContext> pContext;
 					D3D_FEATURE_LEVEL flOut;
-					pCreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &pDevice, &flOut, &pContext);
+					const D3D_FEATURE_LEVEL featureLevels[] = {
+						D3D_FEATURE_LEVEL_11_1,
+						D3D_FEATURE_LEVEL_11_0,
+						D3D_FEATURE_LEVEL_10_1,
+						D3D_FEATURE_LEVEL_10_0,
+					};
+					UINT flags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+					if (SUCCEEDED(pCreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, featureLevels, (UINT)std::size(featureLevels), D3D11_SDK_VERSION, &pDevice, &flOut, &pContext)) && pDevice) {
+						CComPtr<ID3D11VideoDevice> pVideoDevice;
+						if (SUCCEEDED(pDevice->QueryInterface(__uuidof(ID3D11VideoDevice), (void**)&pVideoDevice)) && pVideoDevice) {
+							pVideoDevice->GetVideoDecoderProfileCount();
+						}
+					}
 				}
 			}
+			pCF.Release();
 			CoUninitialize();
 		}).detach();
 	}
@@ -1030,7 +1043,7 @@ BOOL CMPlayerCApp::InitInstance()
 	CString appSavePath;
 	GetAppSavePath(appSavePath);
 
-	if (m_Profile.GetSettingsLocation() != SETS_PROGRAMDIR) {
+	if (m_cmdln.empty() && m_Profile.GetSettingsLocation() != SETS_PROGRAMDIR) {
 		CRegKey key;
 		if (ERROR_SUCCESS == key.Create(HKEY_LOCAL_MACHINE, L"Software\\MPC-BE")) {
 			CString path = GetProgramPath();
@@ -1073,7 +1086,7 @@ BOOL CMPlayerCApp::InitInstance()
 	}
 
 	m_HistoryFile.SetFilename(appSavePath + MPC_HISTORY_FILENAME);
-	{
+	if (m_cmdln.empty()) {
 		unsigned n = m_HistoryFile.GetSessionsCount();
 		if (m_s.nHistoryEntriesMax < n) {
 			m_s.nHistoryEntriesMax = std::clamp(RoundUp(n, 100), 100u, 900u);

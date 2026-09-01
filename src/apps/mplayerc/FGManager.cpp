@@ -2737,15 +2737,22 @@ CFGManagerCustom::CFGManagerCustom(LPCWSTR pName, LPUNKNOWN pUnk, HWND hWnd, boo
 	m_transform.emplace_back(DNew CFGFilterRegistry(GUIDFromCString(L"{BE2CF8A7-08CE-4A2C-9A25-FD726A999196}"), MERIT64_DO_NOT_USE));
 
 	{ // DCDSPFilter (early versions crash mpc)
-		CRegKey key;
-		WCHAR buff[256] = { 0 };
-		ULONG len = std::size(buff);
-		CString clsid = L"{B38C58A0-1809-11D6-A458-EDAE78F1DF12}";
+		static int s_isOldDCDSP = -1;
+		if (s_isOldDCDSP == -1) {
+			s_isOldDCDSP = 0;
+			CRegKey key;
+			WCHAR buff[256] = { 0 };
+			ULONG len = std::size(buff);
+			CString clsid = L"{B38C58A0-1809-11D6-A458-EDAE78F1DF12}";
 
-		if (ERROR_SUCCESS == key.Open(HKEY_CLASSES_ROOT, L"CLSID\\" + clsid + L"\\InprocServer32", KEY_READ)
-				&& ERROR_SUCCESS == key.QueryStringValue(nullptr, buff, &len)
-				&& FileVersion::GetVer(buff).value < FileVersion::Ver(1,0,3,0).value) {
-			m_transform.emplace_back(DNew CFGFilterRegistry(GUIDFromCString(clsid), MERIT64_DO_NOT_USE));
+			if (ERROR_SUCCESS == key.Open(HKEY_CLASSES_ROOT, L"CLSID\\" + clsid + L"\\InprocServer32", KEY_READ)
+					&& ERROR_SUCCESS == key.QueryStringValue(nullptr, buff, &len)
+					&& FileVersion::GetVer(buff).value < FileVersion::Ver(1,0,3,0).value) {
+				s_isOldDCDSP = 1;
+			}
+		}
+		if (s_isOldDCDSP == 1) {
+			m_transform.emplace_back(DNew CFGFilterRegistry(GUIDFromCString(L"{B38C58A0-1809-11D6-A458-EDAE78F1DF12}"), MERIT64_DO_NOT_USE));
 		}
 	}
 

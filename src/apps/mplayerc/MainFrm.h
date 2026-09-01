@@ -826,6 +826,11 @@ private: // control bar embedded members
 	void RestoreControlBars();
 	void SaveControlBars();
 
+	void EnsureSubresyncBarCreated();
+	void EnsureCaptureBarCreated();
+	void EnsureNavigationBarCreated();
+	void EnsureShaderEditorBarCreated();
+
 	// Generated message map functions
 
 	DECLARE_MESSAGE_MAP()
