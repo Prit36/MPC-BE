@@ -19,6 +19,7 @@
  */
 
 #include "stdafx.h"
+#include "DSUtil/PerfTimer.h"
 #include <dxva2_guids.h>
 #include "DXVA2Decoder.h"
 #include "../MPCVideoDec.h"
@@ -118,6 +119,7 @@ HRESULT CDXVA2Decoder::DeliverFrame()
 
 	m_pFilter->AddFrameSideData(pSample, pFrame);
 
+	PerfTimer::LogFirstSample(L"DXVA2Decoder: Delivering first hardware frame to video renderer");
 	HRESULT hr = m_pFilter->GetOutputPin()->Deliver(pSample);
 
 	if (bSizeChanged && biHeight) {

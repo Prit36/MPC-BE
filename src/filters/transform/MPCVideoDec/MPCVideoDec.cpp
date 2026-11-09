@@ -3142,6 +3142,7 @@ HRESULT CMPCVideoDecFilter::CompleteConnect(PIN_DIRECTION direction, IPin* pRece
 {
 	if (direction == PINDIR_OUTPUT) {
 		DLog(L"CMPCVideoDecFilter::CompleteConnect() - PINDIR_OUTPUT");
+		PerfTimer::Log(L"MPCVideoDec CompleteConnect output enter");
 
 		m_OutputFilterClsid = GetCLSID(pReceivePin);
 
@@ -3284,6 +3285,7 @@ HRESULT CMPCVideoDecFilter::CompleteConnect(PIN_DIRECTION direction, IPin* pRece
 		}
 
 		m_bReinit = false;
+		PerfTimer::Log(L"MPCVideoDec CompleteConnect output done");
 	}
 
 	return __super::CompleteConnect(direction, pReceivePin);
@@ -4014,8 +4016,8 @@ HRESULT CMPCVideoDecFilter::DecodeInternal(AVPacket *avpkt, REFERENCE_TIME rtSta
 
 		AddFrameSideData(pOut, m_pFrame);
 
+		PerfTimer::LogFirstSample(L"MPCVideoDec: Delivering first frame to video renderer");
 		hr = m_pOutput->Deliver(pOut);
-		PerfTimer::LogFirstFrame(L"MPCVideoDec: Delivered first frame to video renderer");
 
 		av_frame_unref(frame);
 
@@ -4285,6 +4287,13 @@ void CMPCVideoDecFilter::SetThreadCount()
 
 HRESULT CMPCVideoDecFilter::Transform(IMediaSample* pIn)
 {
+	if (PerfTimer::IsEnabled()) {
+		static bool s_bFirstInputLogged = false;
+		if (!s_bFirstInputLogged) {
+			s_bFirstInputLogged = true;
+			PerfTimer::Log(L"MPCVideoDec: first input packet");
+		}
+	}
 	if (m_bReinit) {
 		DLog(L"CMPCVideoDecFilter::Transform() - skip sample during initialization");
 		return S_OK;

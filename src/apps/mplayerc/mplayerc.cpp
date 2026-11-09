@@ -40,7 +40,68 @@
 #include "Version.h"
 #include <clsids.h>
 #include <d3d11.h>
+#include <dxgi1_2.h>
 #include "DSUtil/PerfTimer.h"
+#include "DSUtil/D3D11DeviceHandoff.h"
+
+// Startup tracing only: record when the renderer submits its first frame after
+// the first decoded sample arrived. The hook is never installed in normal use.
+static HRESULT(STDMETHODCALLTYPE* Real_TracePresent)(IDXGISwapChain*, UINT, UINT) = nullptr;
+static HRESULT(STDMETHODCALLTYPE* Real_TracePresent1)(IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*) = nullptr;
+
+static HRESULT STDMETHODCALLTYPE Trace_Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
+{
+	const HRESULT hr = Real_TracePresent(pSwapChain, SyncInterval, Flags);
+	if (!(Flags & DXGI_PRESENT_TEST) && PerfTimer::HasFirstSample()) {
+		PerfTimer::LogFirstFrame(L"DXGI Present after first sample");
+	}
+	return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE Trace_Present1(IDXGISwapChain1* pSwapChain, UINT SyncInterval, UINT Flags, const DXGI_PRESENT_PARAMETERS* pParams)
+{
+	const HRESULT hr = Real_TracePresent1(pSwapChain, SyncInterval, Flags, pParams);
+	if (!(Flags & DXGI_PRESENT_TEST) && PerfTimer::HasFirstSample()) {
+		PerfTimer::LogFirstFrame(L"DXGI Present1 after first sample");
+	}
+	return hr;
+}
+
+static void InstallPresentTraceHook(ID3D11Device* pDevice)
+{
+	CComQIPtr<IDXGIDevice> pDXGIDevice(pDevice);
+	CComPtr<IDXGIAdapter> pAdapter;
+	CComPtr<IDXGIFactory2> pFactory;
+	if (!pDXGIDevice || FAILED(pDXGIDevice->GetAdapter(&pAdapter))
+			|| FAILED(pAdapter->GetParent(IID_PPV_ARGS(&pFactory)))) {
+		return;
+	}
+
+	DXGI_SWAP_CHAIN_DESC1 desc = {};
+	desc.Width = desc.Height = 8;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	desc.BufferCount = 2;
+	desc.Scaling = DXGI_SCALING_STRETCH;
+	desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+	desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+
+	CComPtr<IDXGISwapChain1> pSwapChain;
+	if (FAILED(pFactory->CreateSwapChainForComposition(pDevice, &desc, nullptr, &pSwapChain))) {
+		return;
+	}
+
+	void** vtbl = *reinterpret_cast<void***>(pSwapChain.p);
+	Real_TracePresent = reinterpret_cast<decltype(Real_TracePresent)>(vtbl[8]);
+	Real_TracePresent1 = reinterpret_cast<decltype(Real_TracePresent1)>(vtbl[22]);
+
+	DetourTransactionBegin();
+	DetourAttach(&(PVOID&)Real_TracePresent, (PVOID)Trace_Present);
+	DetourAttach(&(PVOID&)Real_TracePresent1, (PVOID)Trace_Present1);
+	DetourTransactionCommit();
+	PerfTimer::Log(L"Present trace hook installed");
+}
 
 extern "C" {
 	// hack to avoid error "unresolved external symbol" when linking
@@ -180,8 +241,14 @@ CMPlayerCApp::CMPlayerCApp()
 	PerfTimer::Log(L"CMPlayerCApp ctor");
 }
 
+static void JoinEarlyGraphicsWarmup();
+
 CMPlayerCApp::~CMPlayerCApp()
 {
+	if (m_graphicsWarmupThread.joinable()) {
+		m_graphicsWarmupThread.join();
+	}
+	JoinEarlyGraphicsWarmup();
 	if (m_hNTDLL) {
 		FreeLibrary(m_hNTDLL);
 	}
@@ -236,6 +303,196 @@ void CMPlayerCApp::ShowCmdlnSwitches() const
 
 /////////////////////////////////////////////////////////////////////////////
 // The one and only CMPlayerCApp object
+
+static bool IsMPCVRUsingD3D11()
+{
+	DWORD useD3D11 = 1;
+	CRegKey key;
+	if (key.Open(HKEY_CURRENT_USER, L"Software\\MPC-BE Filters\\MPC Video Renderer", KEY_READ) == ERROR_SUCCESS) {
+		key.QueryDWORDValue(L"UseD3D11", useD3D11);
+	}
+	return useD3D11 != 0;
+}
+
+// On NVIDIA GPUs the first hardware video decoder used on a D3D11 device costs
+// ~3 ms to create and ~14 ms in its first DecoderBeginFrame (decode engine
+// setup); later decoders of any codec on the same device cost ~2 ms. Pay that
+// with a tiny throwaway decoder on the warmup device, which the real decoder
+// then takes over (CD3D11DeviceHandoff). Limited to the vendor it was verified on.
+static void PrewarmVideoDecoder(ID3D11Device* pDevice, const DXGI_ADAPTER_DESC& adapterDesc)
+{
+	if (adapterDesc.VendorId != 0x10DE) {
+		return;
+	}
+
+	CComQIPtr<ID3D11VideoDevice> pVideoDevice(pDevice);
+	CComPtr<ID3D11DeviceContext> pContext;
+	pDevice->GetImmediateContext(&pContext);
+	CComQIPtr<ID3D11VideoContext> pVideoContext(pContext.p);
+	if (!pVideoDevice || !pVideoContext) {
+		return;
+	}
+
+	static const GUID profiles[] = {
+		{ 0x1b81be68, 0xa0c7, 0x11d3, { 0xb9, 0x84, 0x00, 0xc0, 0x4f, 0x2e, 0x73, 0xc5 } }, // D3D11_DECODER_PROFILE_H264_VLD_NOFGT
+		{ 0x5b11d51b, 0x2f4c, 0x4452, { 0xbc, 0xc3, 0x09, 0xf2, 0xa1, 0x16, 0x0c, 0xc0 } }, // D3D11_DECODER_PROFILE_HEVC_VLD_MAIN
+	};
+	for (const GUID& profile : profiles) {
+		BOOL bSupported = FALSE;
+		if (FAILED(pVideoDevice->CheckVideoDecoderFormat(&profile, DXGI_FORMAT_NV12, &bSupported)) || !bSupported) {
+			continue;
+		}
+
+		const D3D11_VIDEO_DECODER_DESC decoderDesc = { profile, 256, 256, DXGI_FORMAT_NV12 };
+		UINT nConfigs = 0;
+		D3D11_VIDEO_DECODER_CONFIG config = {};
+		if (FAILED(pVideoDevice->GetVideoDecoderConfigCount(&decoderDesc, &nConfigs)) || !nConfigs
+				|| FAILED(pVideoDevice->GetVideoDecoderConfig(&decoderDesc, 0, &config))) {
+			continue;
+		}
+
+		D3D11_TEXTURE2D_DESC texDesc = {};
+		texDesc.Width = texDesc.Height = 256;
+		texDesc.MipLevels = texDesc.ArraySize = 1;
+		texDesc.Format = DXGI_FORMAT_NV12;
+		texDesc.SampleDesc.Count = 1;
+		texDesc.Usage = D3D11_USAGE_DEFAULT;
+		texDesc.BindFlags = D3D11_BIND_DECODER;
+
+		D3D11_VIDEO_DECODER_OUTPUT_VIEW_DESC viewDesc = {};
+		viewDesc.DecodeProfile = profile;
+		viewDesc.ViewDimension = D3D11_VDOV_DIMENSION_TEXTURE2D;
+
+		CComPtr<ID3D11Texture2D> pTexture;
+		CComPtr<ID3D11VideoDecoderOutputView> pView;
+		CComPtr<ID3D11VideoDecoder> pDecoder;
+		if (SUCCEEDED(pDevice->CreateTexture2D(&texDesc, nullptr, &pTexture))
+				&& SUCCEEDED(pVideoDevice->CreateVideoDecoderOutputView(pTexture, &viewDesc, &pView))
+				&& SUCCEEDED(pVideoDevice->CreateVideoDecoder(&decoderDesc, &config, &pDecoder))) {
+			if (SUCCEEDED(pVideoContext->DecoderBeginFrame(pDecoder, pView, 0, nullptr))) {
+				pVideoContext->DecoderEndFrame(pDecoder);
+			}
+			pContext->Flush();
+			PerfTimer::Log(L"Graphics warmup: video decoder initialized");
+			return;
+		}
+	}
+}
+
+// The first D3D11 device in a process loads the GPU driver, by far the most
+// expensive step before the first video frame. Create it with the D3D11
+// decoder's parameters and hand it over (CD3D11DeviceHandoff), so the decoder
+// does not create another device later on the playback-critical path.
+// d3d11.dll and dxgi.dll stay loaded: the renderer and decoder use them anyway.
+static void GraphicsWarmup()
+{
+	PerfTimer::Log(L"Graphics driver warmup begin");
+	CComPtr<ID3D11Device> device;
+	LUID luid = {};
+	HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
+	HMODULE d3d11 = LoadLibraryW(L"d3d11.dll");
+	if (dxgi && d3d11) {
+		auto createFactory = reinterpret_cast<decltype(&CreateDXGIFactory1)>(GetProcAddress(dxgi, "CreateDXGIFactory1"));
+		auto createDevice = reinterpret_cast<decltype(&D3D11CreateDevice)>(GetProcAddress(d3d11, "D3D11CreateDevice"));
+		CComPtr<IDXGIFactory1> factory;
+		CComPtr<IDXGIAdapter> adapter;
+		DXGI_ADAPTER_DESC desc = {};
+		if (createFactory && createDevice
+				&& SUCCEEDED(createFactory(IID_PPV_ARGS(&factory)))
+				&& SUCCEEDED(factory->EnumAdapters(0, &adapter))
+				&& SUCCEEDED(adapter->GetDesc(&desc))) {
+			static const D3D_FEATURE_LEVEL levels[] = {
+				D3D_FEATURE_LEVEL_11_1,
+				D3D_FEATURE_LEVEL_11_0,
+				D3D_FEATURE_LEVEL_10_1,
+				D3D_FEATURE_LEVEL_10_0,
+			};
+			if (SUCCEEDED(createDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, CD3D11DeviceHandoff::DecoderFlags,
+					levels, (UINT)std::size(levels), D3D11_SDK_VERSION, &device, nullptr, nullptr))) {
+				luid = desc.AdapterLuid;
+				PerfTimer::Log(L"Graphics driver warmup device ready");
+				PrewarmVideoDecoder(device, desc);
+			}
+		}
+	}
+	CD3D11DeviceHandoff::Offer(device, luid);
+	if (device && PerfTimer::IsEnabled()) {
+		InstallPresentTraceHook(device);
+	}
+	PerfTimer::Log(L"Graphics driver warmup end");
+}
+
+static HANDLE g_hEarlyGraphicsWarmup = nullptr;
+
+// Runs from the CRT initializer table, before the application object and the
+// rest of the static initializers, so the driver starts loading ~6 ms earlier
+// than InitInstance could start it. Only the unambiguous case is handled here:
+// a file argument, settings in the registry, MPC Video Renderer with D3D11, and
+// no running player that a single-instance launch would hand the file to.
+// Everything else falls back to InitInstance.
+static void __cdecl StartEarlyGraphicsWarmup()
+{
+	PerfTimer::Init();
+
+	int argc = 0;
+	LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+	if (!argv) {
+		return;
+	}
+	bool bHasFile = false;
+	for (int i = 1; i < argc && !bHasFile; i++) {
+		bHasFile = argv[i][0] != L'/' && argv[i][0] != L'-';
+	}
+	LocalFree(argv);
+	if (!bHasFile || ::FindWindowW(MPC_WND_CLASS_NAMEW, nullptr)) {
+		return;
+	}
+
+	// Mirror CProfile: an .ini next to the program or in the user profile wins over the registry.
+	WCHAR path[MAX_PATH];
+	const DWORD len = GetModuleFileNameW(nullptr, path, MAX_PATH);
+	if (!len || len >= MAX_PATH || !::PathRenameExtensionW(path, L".ini") || ::PathFileExistsW(path)) {
+		return;
+	}
+	// No CString here: MFC's string manager may not be constructed yet.
+	PWSTR pAppData = nullptr;
+	WCHAR userIni[MAX_PATH * 2];
+	const HRESULT hrAppData = SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &pAppData);
+	const bool bUserIniPath = SUCCEEDED(hrAppData)
+		&& swprintf_s(userIni, L"%s\\MPC-BE\\%s", pAppData, ::PathFindFileNameW(path)) > 0;
+	CoTaskMemFree(pAppData);
+	if (!bUserIniPath || ::PathFileExistsW(userIni)) {
+		return;
+	}
+
+	DWORD renderer = VIDRNDT_EVR_CP;
+	CRegKey video;
+	if (video.Open(HKEY_CURRENT_USER, L"Software\\MPC-BE\\Video", KEY_READ) != ERROR_SUCCESS
+			|| video.QueryDWORDValue(L"VideoRenderer", renderer) != ERROR_SUCCESS
+			|| renderer != VIDRNDT_MPCVR || !IsMPCVRUsingD3D11()) {
+		return;
+	}
+
+	CD3D11DeviceHandoff::BeginPending();
+	g_hEarlyGraphicsWarmup = CreateThread(nullptr, 0, [](LPVOID) -> DWORD { GraphicsWarmup(); return 0; }, nullptr, 0, nullptr);
+	if (!g_hEarlyGraphicsWarmup) {
+		CD3D11DeviceHandoff::Offer(nullptr, {});
+	}
+}
+
+static void JoinEarlyGraphicsWarmup()
+{
+	if (g_hEarlyGraphicsWarmup) {
+		WaitForSingleObject(g_hEarlyGraphicsWarmup, INFINITE);
+		CloseHandle(g_hEarlyGraphicsWarmup);
+		g_hEarlyGraphicsWarmup = nullptr;
+	}
+}
+
+// .CRT$XCB runs before the C++ dynamic initializers in .CRT$XCU.
+#pragma section(".CRT$XCB", long, read)
+extern "C" __declspec(allocate(".CRT$XCB")) void(__cdecl* g_pfnStartEarlyGraphicsWarmup)() = StartEarlyGraphicsWarmup;
+#pragma comment(linker, "/include:g_pfnStartEarlyGraphicsWarmup")
 
 CMPlayerCApp theApp;
 
@@ -986,48 +1243,20 @@ BOOL CMPlayerCApp::InitInstance()
 		}
 	}
 
-	if (!m_cmdln.empty()) {
-		std::thread([] {
-			CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-			CComPtr<IClassFactory> pCF;
-			CoGetClassObject(CLSID_MPCVR, CLSCTX_INPROC_SERVER, nullptr, IID_IClassFactory, (void**)&pCF);
-			HMODULE hD3D11 = LoadLibraryW(L"d3d11.dll");
-			if (hD3D11) {
-				typedef HRESULT (WINAPI *PFN_D3D11_CREATE_DEVICE)(
-					IDXGIAdapter*,
-					D3D_DRIVER_TYPE,
-					HMODULE,
-					UINT,
-					const D3D_FEATURE_LEVEL*,
-					UINT,
-					UINT,
-					ID3D11Device**,
-					D3D_FEATURE_LEVEL*,
-					ID3D11DeviceContext**
-				);
-				PFN_D3D11_CREATE_DEVICE pCreateDevice = (PFN_D3D11_CREATE_DEVICE)GetProcAddress(hD3D11, "D3D11CreateDevice");
-				if (pCreateDevice) {
-					CComPtr<ID3D11Device> pDevice;
-					CComPtr<ID3D11DeviceContext> pContext;
-					D3D_FEATURE_LEVEL flOut;
-					const D3D_FEATURE_LEVEL featureLevels[] = {
-						D3D_FEATURE_LEVEL_11_1,
-						D3D_FEATURE_LEVEL_11_0,
-						D3D_FEATURE_LEVEL_10_1,
-						D3D_FEATURE_LEVEL_10_0,
-					};
-					UINT flags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-					if (SUCCEEDED(pCreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, featureLevels, (UINT)std::size(featureLevels), D3D11_SDK_VERSION, &pDevice, &flOut, &pContext)) && pDevice) {
-						CComPtr<ID3D11VideoDevice> pVideoDevice;
-						if (SUCCEEDED(pDevice->QueryInterface(__uuidof(ID3D11VideoDevice), (void**)&pVideoDevice)) && pVideoDevice) {
-							pVideoDevice->GetVideoDecoderProfileCount();
-						}
-					}
-				}
-			}
-			pCF.Release();
-			CoUninitialize();
-		}).detach();
+	// Load the GPU driver on a worker while the window and graph are built.
+	// Normally this already started from a CRT initializer (see
+	// StartEarlyGraphicsWarmup); this covers the cases it does not handle.
+	if (g_hEarlyGraphicsWarmup) {
+		if (m_s.slFiles.empty()) {
+			CD3D11DeviceHandoff::Clear(); // nothing will be opened
+		}
+	} else if (!m_s.slFiles.empty()) {
+		int startupRenderer = VIDRNDT_EVR_CP;
+		m_Profile.ReadInt(L"Video", L"VideoRenderer", startupRenderer);
+		if (startupRenderer == VIDRNDT_MPCVR && IsMPCVRUsingD3D11()) {
+			CD3D11DeviceHandoff::BeginPending();
+			m_graphicsWarmupThread = std::thread(GraphicsWarmup);
+		}
 	}
 
 	// read settings
@@ -1112,8 +1341,18 @@ BOOL CMPlayerCApp::InitInstance()
 
 	pFrame->SetDefaultWindowRect((m_s.nCLSwitches & CLSW_MONITOR) ? m_s.iMonitor : 0, !SysVersion::IsWin10orLater());
 	pFrame->SetDefaultFullscreenState();
+	const bool bCmdLineHandledEarly = !m_cmdln.empty() && m_s.fEnableWorkerThreadForOpening
+		&& pFrame->m_pGraphThread && m_s.m_VRSettings.iVideoRenderer == VIDRNDT_MPCVR;
+	if (bCmdLineHandledEarly) {
+		PerfTimer::Log(L"Early HandleCmdLine start");
+		pFrame->HandleCmdLine(0, (LPARAM)&m_cmdln);
+		PerfTimer::Log(L"Early HandleCmdLine end");
+	}
 	pFrame->SetIcon(AfxGetApp()->LoadIconW(IDR_MAINFRAME), TRUE);
 	pFrame->DragAcceptFiles();
+	if (!m_s.slFiles.empty() && !(m_s.nCLSwitches & CLSW_MINIMIZED)) {
+		pFrame->SetShowTransitionDisabled(true);
+	}
 	pFrame->ShowWindow((m_s.nCLSwitches& CLSW_MINIMIZED) ? SW_SHOWMINIMIZED : SW_SHOW);
 	PerfTimer::Log(L"After ShowWindow");
 
@@ -1138,10 +1377,13 @@ BOOL CMPlayerCApp::InitInstance()
 		}
 	}
 
-	if (!m_cmdln.empty()) {
+	if (!m_cmdln.empty() && !bCmdLineHandledEarly) {
 		PerfTimer::Log(L"Direct HandleCmdLine start");
 		pFrame->HandleCmdLine(0, (LPARAM)&m_cmdln);
 		PerfTimer::Log(L"Direct HandleCmdLine end");
+	}
+	if (!m_cmdln.empty() && pFrame->GetLoadState() == MLS_CLOSED) {
+		pFrame->m_wndView.EnsureLogoLoaded();
 	}
 	RegisterHotkeys();
 
@@ -1350,7 +1592,13 @@ int CMPlayerCApp::ExitInstance()
 		}
 	}
 
+	if (m_graphicsWarmupThread.joinable()) {
+		m_graphicsWarmupThread.join();
+	}
+	JoinEarlyGraphicsWarmup();
+	CD3D11DeviceHandoff::Clear();
 	OleUninitialize();
+	PerfTimer::Flush();
 
 	return CWinApp::ExitInstance();
 }

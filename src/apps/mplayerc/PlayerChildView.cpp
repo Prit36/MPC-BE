@@ -31,7 +31,11 @@ CChildView::CChildView(CMainFrame* pMainFrame)
 	: m_hCursor(::LoadCursorW(nullptr, IDC_ARROW))
 	, m_pMainFrame(pMainFrame)
 {
-	LoadLogo();
+	// File launches immediately replace the logo with video. Codec discovery
+	// and image decoding should not delay creation of the playback window.
+	if (AfxGetAppSettings().slFiles.empty()) {
+		LoadLogo();
+	}
 }
 
 int CChildView::OnCreate(LPCREATESTRUCT lpCreateStruct)
@@ -127,11 +131,19 @@ void CChildView::SetVideoRect(CRect r)
 	Invalidate();
 }
 
+void CChildView::EnsureLogoLoaded()
+{
+	if (!m_bLogoLoaded) {
+		LoadLogo();
+	}
+}
+
 void CChildView::LoadLogo()
 {
 	CAppSettings& s = AfxGetAppSettings();
 
 	CAutoLock cAutoLock(&m_csLogo);
+	m_bLogoLoaded = true;
 
 	m_pBitmapResized.Release();
 	m_logoRect.SetRectEmpty();

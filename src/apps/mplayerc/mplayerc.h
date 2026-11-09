@@ -33,6 +33,7 @@
 #include "AppSettings.h"
 
 #include <mutex>
+#include <thread>
 
 #define DEF_LOGO IDF_LOGO1
 
@@ -52,6 +53,7 @@ private:
 	ATL::CMutex m_mutexOneInstance;
 
 	HMODULE m_hNTDLL = nullptr;
+	std::thread m_graphicsWarmupThread;
 
 	std::list<CString> m_cmdln;
 	void PreProcessCommandLine();

@@ -26,6 +26,7 @@
 #include "DSUtil/DSUtil.h"
 #include "DSUtil/DXVAState.h"
 #include "DSUtil/PerfTimer.h"
+#include "DSUtil/D3D11DeviceHandoff.h"
 #include "D3D11Decoder.h"
 #include "../MPCVideoDec.h"
 #include "../DxgiUtils.h"
@@ -148,8 +149,20 @@ HRESULT CD3D11Decoder::CreateD3D11Device(UINT nDeviceIndex, ID3D11Device** ppDev
 
 	// Create a device with video support, and BGRA support for Direct2D interoperability (drawing UI, etc)
 	UINT nCreationFlags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+	static_assert((D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT) == CD3D11DeviceHandoff::DecoderFlags);
 
 	D3D_FEATURE_LEVEL d3dFeatureLevel;
+#ifndef _DEBUG
+	// Use the device the player created while loading the GPU driver at startup.
+	DXGI_ADAPTER_DESC adapterDesc = {};
+	if (SUCCEEDED(pDXGIAdapter->GetDesc(&adapterDesc))) {
+		pD3D11Device = CD3D11DeviceHandoff::Take(adapterDesc.AdapterLuid, nCreationFlags);
+	}
+	if (pD3D11Device) {
+		d3dFeatureLevel = pD3D11Device->GetFeatureLevel();
+		DLog(L"CD3D11Decoder::CreateD3D11Device() : Using the device created at startup");
+	} else
+#endif
 	hr = m_dxLib.mD3D11CreateDevice(
 		pDXGIAdapter,
 		D3D_DRIVER_TYPE_UNKNOWN,
@@ -215,6 +228,7 @@ HRESULT CD3D11Decoder::CreateD3D11Decoder(AVCodecContext* c)
 
 	// release the old decoder, it needs to be re-created
 	SAFE_RELEASE(m_pDecoder);
+	PerfTimer::Log(L"CD3D11Decoder::CreateD3D11Decoder enter");
 
 	// find a decoder configuration
 	GUID profileGUID = GUID_NULL;
@@ -296,6 +310,7 @@ HRESULT CD3D11Decoder::CreateD3D11Decoder(AVCodecContext* c)
 	}
 
 	FillHWContext((AVD3D11VAContext*)c->hwaccel_context);
+	PerfTimer::Log(L"CD3D11Decoder::CreateD3D11Decoder done");
 
 	m_DecoderGUID = profileGUID;
 	DXVAState::SetActiveState(m_DecoderGUID, L"D3D11 Native");
@@ -597,7 +612,9 @@ HRESULT CD3D11Decoder::PostConnect(AVCodecContext* c, IPin* pPin)
 
 	// create the device
 	ID3D11Device* pD3D11Device = nullptr;
+	PerfTimer::Log(L"CD3D11Decoder::PostConnect: before CreateD3D11Device");
 	hr = CreateD3D11Device(nDevice, &pD3D11Device, &m_AdapterDesc);
+	PerfTimer::Log(L"CD3D11Decoder::PostConnect: after CreateD3D11Device");
 	if (FAILED(hr)) {
 		return E_FAIL;
 	}
@@ -675,7 +692,9 @@ HRESULT CD3D11Decoder::PostConnect(AVCodecContext* c, IPin* pPin)
 	}
 
 	// Notice the connected pin that we're sending D3D11 textures
+	PerfTimer::Log(L"CD3D11Decoder::PostConnect: before ActivateD3D11Decoding");
 	hr = pD3D11DecoderConfiguration->ActivateD3D11Decoding(pDeviceContext->device, pDeviceContext->device_context, pDeviceContext->lock_ctx, 0);
+	PerfTimer::Log(L"CD3D11Decoder::PostConnect: after ActivateD3D11Decoding");
 	DLogIf(FAILED(hr), L"CD3D11Decoder::PostConnect() : ID3D11DecoderConfiguration::ActivateD3D11Decoding() failed");
 
 	return hr;
@@ -774,8 +793,8 @@ HRESULT CD3D11Decoder::DeliverFrame()
 
 	m_pFilter->AddFrameSideData(pSample, pFrame);
 
+	PerfTimer::LogFirstSample(L"CD3D11Decoder: Delivering first D3D11 hardware frame to video renderer");
 	HRESULT hr = m_pFilter->GetOutputPin()->Deliver(pSample);
-	PerfTimer::LogFirstFrame(L"CD3D11Decoder: Delivered first D3D11 hardware frame to video renderer");
 
 	if (bSizeChanged && biHeight) {
 		m_pFilter->NotifyEvent(EC_VIDEO_SIZE_CHANGED, MAKELPARAM(biWidth, abs(biHeight)), 0);

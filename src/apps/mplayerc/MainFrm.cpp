@@ -47,6 +47,7 @@
 #include "TunerScanDlg.h"
 #include "UpdateChecker.h"
 #include "DSUtil/PerfTimer.h"
+#include "DSUtil/D3D11DeviceHandoff.h"
 
 #include <ExtLib/BaseClasses/mtype.h>
 #include <Mpconfig.h>
@@ -654,7 +655,11 @@ CMainFrame::CMainFrame() :
 	m_abRepeatPositionAEnabled(false),
 	m_abRepeatPositionBEnabled(false)
 {
-	m_Lcd.SetVolumeRange(0, 100);
+	// The LCD SDK constructs fonts and bitmaps even without an LCD device.
+	if (AfxGetAppSettings().fLCDSupport) {
+		m_pLcd = std::make_unique<CMPC_Lcd>();
+		m_pLcd->SetVolumeRange(0, 100);
+	}
 
 	// Remove the lines-splitters between bars
 	afxData.cyBorder2 = 0;
@@ -723,6 +728,14 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	// Should never be RTLed
 	m_wndView.ModifyStyleEx(WS_EX_LAYOUTRTL, WS_EX_NOINHERITLAYOUT);
 
+	// Start the worker while controls are built, and publish the frame before
+	// resuming it so commands cannot race SetMainFrame().
+	m_pGraphThread = (CGraphThread*)AfxBeginThread(RUNTIME_CLASS(CGraphThread), THREAD_PRIORITY_NORMAL, 0, CREATE_SUSPENDED);
+	if (m_pGraphThread) {
+		m_pGraphThread->SetMainFrame(this);
+		m_pGraphThread->ResumeThread();
+	}
+
 	if (!bHasCmdLineFiles) {
 		PerfTimer::Log(L"OnCreate: before FlyBar/OSD/Preview");
 		// Create FlyBar Window
@@ -732,16 +745,8 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 		PerfTimer::Log(L"OnCreate: after FlyBar/OSD/Preview");
 	}
 
-	// Create Preview Window
 	if (!bHasCmdLineFiles) {
-		if (!m_wndPreView.CreateEx(WS_EX_TOPMOST, AfxRegisterWndClass(0), nullptr, WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, CRect(0, 0, 160, 109), this, 0)) {
-			DLog(L"Failed to create Preview Window");
-			m_wndView.DestroyWindow();
-			return -1;
-		} else {
-			m_wndPreView.ShowWindow(SW_HIDE);
-			m_wndPreView.SetRelativeSize(s.iSmartSeekSize);
-		}
+		EnsurePreViewCreated();
 	}
 
 	if (__argc <= 1) {
@@ -835,12 +840,6 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	SetFocus();
 
-	PerfTimer::Log(L"OnCreate: before GraphThread");
-	m_pGraphThread = (CGraphThread*)AfxBeginThread(RUNTIME_CLASS(CGraphThread));
-	if (m_pGraphThread) {
-		m_pGraphThread->SetMainFrame(this);
-	}
-	PerfTimer::Log(L"OnCreate: after GraphThread");
 
 	if (s.nCmdlnWebServerPort != 0) {
 		if (s.nCmdlnWebServerPort > 0) {
@@ -855,7 +854,9 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	m_bToggleShaderScreenSpace = s.bToggleShaderScreenSpace;
 
 	SetWindowTextW(s_strPlayerTitle);
-	m_Lcd.SetMediaTitle(s_strPlayerTitle);
+	if (m_pLcd) {
+		m_pLcd->SetMediaTitle(s_strPlayerTitle);
+	}
 
 	m_hWnd_toolbar = m_wndToolBar.GetSafeHwnd();
 
@@ -1129,6 +1130,7 @@ void CMainFrame::RestoreControlBars()
 			}
 		}
 	}
+	m_bControlBarsRestored = true;
 }
 
 void CMainFrame::SaveControlBars()
@@ -1151,6 +1153,14 @@ void CMainFrame::EnsureSubresyncBarCreated()
 		m_wndSubresyncBar.EnableDocking(CBRS_ALIGN_ANY);
 		m_wndSubresyncBar.SetHeight(200);
 		m_dockingbars.emplace_back(&m_wndSubresyncBar);
+		if (m_bControlBarsRestored) {
+			m_wndSubresyncBar.LoadState(this);
+		}
+		m_wndSubresyncBar.ShowWindow(SW_HIDE);
+	}
+	if (m_pCAP && AfxGetAppSettings().fUseSybresync) {
+		CAutoLock lock(&m_csSubLock);
+		m_wndSubresyncBar.SetSubtitle(m_pCurrentSubStream, m_pCAP->GetFPS());
 	}
 }
 
@@ -1161,6 +1171,10 @@ void CMainFrame::EnsureCaptureBarCreated()
 		m_wndCaptureBar.SetBarStyle(m_wndCaptureBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
 		m_wndCaptureBar.EnableDocking(CBRS_ALIGN_LEFT | CBRS_ALIGN_RIGHT);
 		m_dockingbars.emplace_back(&m_wndCaptureBar);
+		if (m_bControlBarsRestored) {
+			m_wndCaptureBar.LoadState(this);
+		}
+		m_wndCaptureBar.ShowWindow(SW_HIDE);
 	}
 }
 
@@ -1171,6 +1185,10 @@ void CMainFrame::EnsureNavigationBarCreated()
 		m_wndNavigationBar.SetBarStyle(m_wndNavigationBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
 		m_wndNavigationBar.EnableDocking(CBRS_ALIGN_LEFT | CBRS_ALIGN_RIGHT);
 		m_dockingbars.emplace_back(&m_wndNavigationBar);
+		if (m_bControlBarsRestored) {
+			m_wndNavigationBar.LoadState(this);
+		}
+		m_wndNavigationBar.ShowWindow(SW_HIDE);
 	}
 }
 
@@ -1181,6 +1199,10 @@ void CMainFrame::EnsureShaderEditorBarCreated()
 		m_wndShaderEditorBar.SetBarStyle(m_wndShaderEditorBar.GetBarStyle() | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC);
 		m_wndShaderEditorBar.EnableDocking(CBRS_ALIGN_ANY);
 		m_dockingbars.emplace_back(&m_wndShaderEditorBar);
+		if (m_bControlBarsRestored) {
+			m_wndShaderEditorBar.LoadState(this);
+		}
+		m_wndShaderEditorBar.ShowWindow(SW_HIDE);
 	}
 }
 
@@ -2635,8 +2657,12 @@ void CMainFrame::OnTimer(UINT_PTR nIDEvent)
 				m_wndSeekBar.SetRange(rtDur);
 				m_wndSeekBar.SetPos(rtNow);
 				m_OSD.SetPosAndRange(rtNow, rtDur);
-				m_Lcd.SetMediaRange(0, rtDur);
-				m_Lcd.SetMediaPos(rtNow);
+				if (m_pLcd) {
+					m_pLcd->SetMediaRange(0, rtDur);
+				}
+				if (m_pLcd) {
+					m_pLcd->SetMediaPos(rtNow);
+				}
 
 				if (m_pCAP) {
 					if (g_bExternalSubtitleTime) {
@@ -3660,6 +3686,10 @@ LRESULT CMainFrame::OnPostOpen(WPARAM wParam, LPARAM lParam)
 {
 	std::unique_ptr<OpenMediaData> pOMD((OpenMediaData*)wParam);
 
+	// The graph is built; a startup D3D11 device the decoder did not take is no longer needed.
+	CD3D11DeviceHandoff::Clear();
+	SetShowTransitionDisabled(false);
+
 	const auto& s = AfxGetAppSettings();
 
 	m_nAudioTrackStored = m_nSubtitleTrackStored = -1;
@@ -4245,6 +4275,7 @@ void CMainFrame::OnInitMenu(CMenu* pMenu)
 
 void CMainFrame::OnInitMenuPopup(CMenu* pPopupMenu, UINT nIndex, BOOL bSysMenu)
 {
+	EnsureMenusLoaded();
 	UINT uiMenuCount = pPopupMenu->GetMenuItemCount();
 	if (uiMenuCount == UINT(-1)) {
 		return;
@@ -4579,6 +4610,9 @@ void CMainFrame::OnUpdatePlayerStatus(CCmdUI* pCmdUI)
 void CMainFrame::OnFilePostOpenMedia(std::unique_ptr<OpenMediaData>& pOMD)
 {
 	PerfTimer::Log(L"OnFilePostOpenMedia enter");
+	if (m_bAudioOnly) {
+		m_wndView.EnsureLogoLoaded();
+	}
 	ASSERT(m_eMediaLoadState == MLS_LOADING);
 	SetLoadState(MLS_LOADED);
 
@@ -4616,6 +4650,7 @@ void CMainFrame::OnFilePostOpenMedia(std::unique_ptr<OpenMediaData>& pOMD)
 	}
 
 	if (OpenDeviceData *pDeviceData = dynamic_cast<OpenDeviceData*>(m_lastOMD.get())) {
+		EnsureCaptureBarCreated();
 		m_wndCaptureBar.EnsureDialogCreated();
 		m_wndCaptureBar.m_capdlg.SetVideoInput(pDeviceData->vinput);
 		m_wndCaptureBar.m_capdlg.SetVideoChannel(pDeviceData->vchannel);
@@ -4671,7 +4706,9 @@ void CMainFrame::OnFilePostOpenMedia(std::unique_ptr<OpenMediaData>& pOMD)
 	m_bDelaySetOutputRect = false;
 
 	if (s.fLaunchfullscreen && !s.ExclusiveFSAllowed() && !m_bFullScreen && !m_bAudioOnly) {
+		PerfTimer::Log(L"OnFilePostOpenMedia: before ToggleFullscreen");
 		ToggleFullscreen(true, true);
+		PerfTimer::Log(L"OnFilePostOpenMedia: after ToggleFullscreen");
 	}
 
 	if (m_bAudioOnly) {
@@ -4900,7 +4937,9 @@ void CMainFrame::OnFilePostCloseMedia()
 	UpdateWindow();
 
 	SetWindowTextW(s_strPlayerTitle);
-	m_Lcd.SetMediaTitle(s_strPlayerTitle);
+	if (m_pLcd) {
+		m_pLcd->SetMediaTitle(s_strPlayerTitle);
+	}
 
 	SetAlwaysOnTop(s.iOnTop);
 
@@ -5806,6 +5845,7 @@ LRESULT CMainFrame::HandleCmdLine(WPARAM wParam, LPARAM lParam)
 
 LRESULT CMainFrame::OnRestore(WPARAM wParam, LPARAM lParam)
 {
+
 	if (m_bTrayIcon) {
 		if (!IsWindowVisible()) {
 			// Rebuild the frame/view layout before exposing the hidden window.
@@ -7652,6 +7692,7 @@ void CMainFrame::OnUpdateViewPlaylist(CCmdUI* pCmdUI)
 // Navigation menu
 void CMainFrame::OnViewNavigation()
 {
+	EnsureNavigationBarCreated();
 	m_wndNavigationBar.EnsureDialogCreated();
 	CAppSettings& s = AfxGetAppSettings();
 	s.fHideNavigation = !s.fHideNavigation;
@@ -7670,6 +7711,7 @@ void CMainFrame::OnUpdateViewNavigation(CCmdUI* pCmdUI)
 
 void CMainFrame::OnViewCapture()
 {
+	EnsureCaptureBarCreated();
 	m_wndCaptureBar.EnsureDialogCreated();
 	ShowControlBarInternal(&m_wndCaptureBar, !m_wndCaptureBar.IsWindowVisible());
 }
@@ -7682,6 +7724,7 @@ void CMainFrame::OnUpdateViewCapture(CCmdUI* pCmdUI)
 
 void CMainFrame::OnViewShaderEditor()
 {
+	EnsureShaderEditorBarCreated();
 	m_wndShaderEditorBar.EnsureDialogCreated();
 	if (m_wndShaderEditorBar.IsWindowVisible()) {
 		SetShaders(); // reset shaders
@@ -8313,13 +8356,18 @@ void CMainFrame::OnPlayPlay()
 		SetAlwaysOnTop(s.iOnTop);
 	}
 
+	PerfTimer::Log(L"OnPlayPlay: before MoveVideoWindow");
 	MoveVideoWindow(false, true);
-	m_Lcd.SetStatusMessage(ResStr(IDS_CONTROLS_PLAYING), 3000);
+	PerfTimer::Log(L"OnPlayPlay: after MoveVideoWindow");
+	if (m_pLcd) {
+		m_pLcd->SetStatusMessage(ResStr(IDS_CONTROLS_PLAYING), 3000);
+	}
 	SetPlayState(PS_PLAY);
 
 	OnTimer(TIMER_STREAMPOSPOLLER);
 
 	SetupEVRColorControl(); // can be configured when streaming begins
+	PerfTimer::Log(L"OnPlayPlay: after SetupEVRColorControl");
 
 	if (m_bfirstPlay) {
 		m_bfirstPlay = false;
@@ -8421,7 +8469,9 @@ void CMainFrame::OnPlayPause()
 			strOSD.Delete(i, strOSD.GetLength() - i);
 		}
 		m_OSD.DisplayMessage(OSD_TOPLEFT, strOSD, 3000);
-		m_Lcd.SetStatusMessage(ResStr(IDS_CONTROLS_PAUSED), 3000);
+		if (m_pLcd) {
+			m_pLcd->SetStatusMessage(ResStr(IDS_CONTROLS_PAUSED), 3000);
+		}
 	}
 
 	SetPlayState(PS_PAUSE);
@@ -8520,7 +8570,9 @@ void CMainFrame::OnPlayStop()
 			strOSD.Delete(i, strOSD.GetLength() - i);
 		}
 		m_OSD.DisplayMessage(OSD_TOPLEFT, strOSD, 3000);
-		m_Lcd.SetStatusMessage(ResStr(IDS_CONTROLS_STOPPED), 3000);
+		if (m_pLcd) {
+			m_pLcd->SetStatusMessage(ResStr(IDS_CONTROLS_STOPPED), 3000);
+		}
 	}
 
 	DisableABRepeat();
@@ -9392,6 +9444,7 @@ void CMainFrame::OnUpdateMenuNavAudio(CCmdUI* pCmdUI)
 
 void CMainFrame::OnMenuAfterPlayback()
 {
+	EnsureMenusLoaded();
 	OnMenu(m_AfterPlaybackMenu.GetSubMenu(0));
 }
 
@@ -9411,7 +9464,9 @@ void CMainFrame::OnPlayVolume(UINT nID)
 	}
 
 	m_OSD.DisplayMessage(OSD_TOPLEFT, strVolume, 3000);
-	m_Lcd.SetVolume((m_wndToolBar.Volume > -10000 ? m_wndToolBar.m_volctrl.GetPos() : 1));
+	if (m_pLcd) {
+		m_pLcd->SetVolume((m_wndToolBar.Volume > -10000 ? m_wndToolBar.m_volctrl.GetPos() : 1));
+	}
 }
 
 void CMainFrame::OnPlayVolumeGain(UINT nID)
@@ -10927,6 +10982,21 @@ void CMainFrame::SetDefaultWindowRect(int iMonitor, const bool bLastCall)
 	}
 }
 
+// A window opened with a file is shown while the GPU driver and graph are
+// still loading. The system's open animation would fade/zoom it in over about
+// the time the first video frame becomes ready, so it is shown without one.
+// The normal transitions are restored once the file is open (OnPostOpen).
+void CMainFrame::SetShowTransitionDisabled(bool bDisabled)
+{
+	if (bDisabled == m_bShowTransitionDisabled || !m_hWnd) {
+		return;
+	}
+	const BOOL bValue = bDisabled ? TRUE : FALSE;
+	if (SUCCEEDED(DwmSetWindowAttribute(m_hWnd, DWMWA_TRANSITIONS_FORCEDISABLED, &bValue, sizeof(bValue)))) {
+		m_bShowTransitionDisabled = bDisabled;
+	}
+}
+
 void CMainFrame::SetDefaultFullscreenState()
 {
 	CAppSettings& s = AfxGetAppSettings();
@@ -12285,13 +12355,10 @@ CString CMainFrame::OpenCreateGraphObject(OpenMediaData* pOMD)
 
 		if (!m_bCustomGraph) {
 			PerfTimer::Log(L"OpenCreateGraphObject: before creating CFGManagerPlayer");
-			auto pFGManager = DNew CFGManagerPlayer(L"CFGManagerPlayer", nullptr, m_pVideoWnd->m_hWnd);
+			auto* pFGManager = DNew CFGManagerPlayer(L"CFGManagerPlayer", nullptr, m_pVideoWnd->m_hWnd);
 			m_pGB = pFGManager;
+			pFGManager->SetUserAgent(http::userAgent);
 			PerfTimer::Log(L"OpenCreateGraphObject: after creating CFGManagerPlayer");
-
-			if (m_pGB) {
-				pFGManager->SetUserAgent(http::userAgent);
-			}
 		}
 	} else if (OpenDVDData* pDVDData = dynamic_cast<OpenDVDData*>(pOMD)) {
 		m_pGB = DNew CFGManagerDVD(L"CFGManagerDVD", nullptr, m_pVideoWnd->m_hWnd);
@@ -13627,7 +13694,11 @@ void CMainFrame::UpdateWindowTitle()
 	const int style = AfxGetAppSettings().iTitleBarTextStyle;
 	CString title = GetTextForBar(style);
 
-	m_Lcd.SetMediaTitle(title);
+	if (m_pLcd) {
+
+		m_pLcd->SetMediaTitle(title);
+
+	}
 
 	if (style == TEXTBAR_EMPTY) {
 		title = s_strPlayerTitle;
@@ -16856,7 +16927,7 @@ void CMainFrame::ReloadSubtitle()
 
 	UpdateSubtitle();
 
-	if (AfxGetAppSettings().fUseSybresync) {
+	if (AfxGetAppSettings().fUseSybresync && m_wndSubresyncBar.GetSafeHwnd()) {
 		m_wndSubresyncBar.ReloadSubtitle();
 	}
 }
@@ -17807,7 +17878,9 @@ void CMainFrame::SendStatusMessage(const CString& msg, const int nTimeOut)
 
 	m_playingmsg = msg;
 	SetTimer(TIMER_STATUSERASER, nTimeOut, nullptr);
-	m_Lcd.SetStatusMessage(msg, nTimeOut);
+	if (m_pLcd) {
+		m_pLcd->SetStatusMessage(msg, nTimeOut);
+	}
 }
 
 void CMainFrame::SendStatusCompactPath(const CString& path)
@@ -18122,6 +18195,9 @@ void CMainFrame::SetLoadState(MPC_LOADSTATE iState)
 	switch (m_eMediaLoadState) {
 		case MLS_CLOSED:
 			m_bOpening = false;
+			if (!m_bClosingState) {
+				m_wndView.EnsureLogoLoaded();
+			}
 			DLog(L"CMainFrame::SetLoadState() : CLOSED");
 			break;
 		case MLS_LOADING:
@@ -18141,7 +18217,9 @@ void CMainFrame::SetLoadState(MPC_LOADSTATE iState)
 
 void CMainFrame::SetPlayState(MPC_PLAYSTATE iState)
 {
-	m_Lcd.SetPlayState((CMPC_Lcd::PlayState)iState);
+	if (m_pLcd) {
+		m_pLcd->SetPlayState((CMPC_Lcd::PlayState)iState);
+	}
 	SendAPICommand(CMD_PLAYMODE, L"%d", iState);
 
 	if (m_bEndOfStream) {
@@ -18336,6 +18414,7 @@ LPCWSTR CMainFrame::GetDVDAudioFormatName(DVD_AudioAttributes& ATR) const
 
 afx_msg void CMainFrame::OnGotoSubtitle(UINT nID)
 {
+	EnsureSubresyncBarCreated();
 	if (m_pMS) {
 		m_rtCurSubPos		= m_wndSeekBar.GetPosReal();
 		m_lSubtitleShift	= 0;
@@ -18460,7 +18539,9 @@ afx_msg void CMainFrame::OnLanguage(UINT nID)
 	// Re-create Win 7 TaskBar preview button for change button hint
 	CreateThumbnailToolbar();
 
-	m_wndSubresyncBar.ReloadTranslatableResources();
+	if (m_wndSubresyncBar.GetSafeHwnd()) {
+		m_wndSubresyncBar.ReloadTranslatableResources();
+	}
 	if (m_wndCaptureBar.m_hWnd) {
 		m_wndCaptureBar.ReloadTranslatableResources();
 	}
@@ -21142,7 +21223,7 @@ void CMainFrame::ShowControlBarInternal(CControlBar* pBar, BOOL bShow)
 	}
 
 	if (!::IsWindow(pBar->GetSafeHwnd())) {
-		if (!bShow) return;
+		return;
 	}
 
 	if (bShow && m_bFullScreen && m_bIsMPCVRExclusiveMode) {

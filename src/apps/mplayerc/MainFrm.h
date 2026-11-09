@@ -240,6 +240,8 @@ class CMainFrame : public CFrameWnd, public CDropTarget, public CDPI
 	bool m_bDelaySetOutputRect = false;
 	void SetDefaultWindowRect(int iMonitor, const bool bLastCall);
 	void SetDefaultFullscreenState();
+	void SetShowTransitionDisabled(bool bDisabled);
+	bool m_bShowTransitionDisabled = false;
 	void RestoreDefaultWindowRect();
 	void ZoomVideoWindow(bool snap = true, double scale = -1);
 	double GetZoomAutoFitScale();
@@ -825,6 +827,7 @@ private: // control bar embedded members
 
 	void RestoreControlBars();
 	void SaveControlBars();
+	bool m_bControlBarsRestored = false;
 
 	void EnsureSubresyncBarCreated();
 	void EnsureCaptureBarCreated();
@@ -947,7 +950,7 @@ private:
 	void cmdLineThreadFunction();
 	afx_msg BOOL OnCopyData(CWnd* pWnd, COPYDATASTRUCT* pCopyDataStruct);
 
-	CMPC_Lcd m_Lcd;
+	std::unique_ptr<CMPC_Lcd> m_pLcd;
 
 	LRESULT OnRestore(WPARAM wParam, LPARAM lParam);
 

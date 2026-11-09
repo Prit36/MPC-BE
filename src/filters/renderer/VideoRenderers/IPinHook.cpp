@@ -152,7 +152,7 @@ static HRESULT STDMETHODCALLTYPE ReceiveConnectionMine(IPinC* This, /* [in] */ I
 static HRESULT (STDMETHODCALLTYPE* ReceiveOrg)(IMemInputPinC * This, IMediaSample *pSample) PURE;
 static HRESULT STDMETHODCALLTYPE ReceiveMineI(IMemInputPinC * This, IMediaSample *pSample)
 {
-	PerfTimer::LogFirstFrame(L"Video Renderer: First sample received (IPinHook)");
+	PerfTimer::LogFirstSample(L"Video Renderer: First sample received (IPinHook)");
 	if (pSample) {
 		// Get frame type
 		if (CComQIPtr<IMediaSample2> pMS2 = pSample) {

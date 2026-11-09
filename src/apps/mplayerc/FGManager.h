@@ -55,6 +55,7 @@ public:
 
 private:
 	CComPtr<IUnknown> m_pUnkInner;
+	bool m_bRenderAudioFirst = false;
 	DWORD m_dwRegister = 0;
 
 	CStreamPath m_streampath;

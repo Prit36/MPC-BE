@@ -31,6 +31,7 @@ class CChildView : public CWnd
 	CCritSec m_csLogo;
 	CComPtr<IWICBitmap> m_pBitmap;
 	CComPtr<IWICBitmap> m_pBitmapResized;
+	bool m_bLogoLoaded = false;
 
 	HCURSOR m_hCursor = nullptr;
 	CPoint m_lastMousePoint{ -1, -1 };
@@ -56,6 +57,7 @@ public:
 	}
 
 	void LoadLogo();
+	void EnsureLogoLoaded();
 	CSize GetLogoSize() const;
 
 	void ClearResizedImage();

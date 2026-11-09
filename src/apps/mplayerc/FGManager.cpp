@@ -1080,9 +1080,11 @@ HRESULT CFGManager::ConnectInternal(IPin* pPinOut, IPin* pPinIn, bool bContinueR
 				pFGF = pMadVRAllocatorPresenter;
 			}
 
-			CString msgStart;
-			msgStart.Format(L"ConnectInternal: trying filter '%s'", pFGF->GetName().GetString());
-			PerfTimer::Log(msgStart);
+			if (PerfTimer::IsEnabled()) {
+				CString msgStart;
+				msgStart.Format(L"ConnectInternal: trying filter '%s'", pFGF->GetName().GetString());
+				PerfTimer::Log(msgStart);
+			}
 
 			CComPtr<IBaseFilter> pBF;
 			std::list<CComQIPtr<IUnknown, &IID_IUnknown>> pUnks;
@@ -1289,16 +1291,24 @@ STDMETHODIMP CFGManager::RenderFile(LPCWSTR lpcwstrFileName, LPCWSTR lpcwstrPlay
 		CFGFilter* pFGF = fl.GetFilter(pos);
 		CComPtr<IBaseFilter> pBF;
 
-		CString msg;
-		msg.Format(L"AddSourceFilterInternal before: %s", pFGF->GetName().GetString());
-		PerfTimer::Log(msg);
+		if (PerfTimer::IsEnabled()) {
+			CString msg;
+			msg.Format(L"AddSourceFilterInternal before: %s", pFGF->GetName().GetString());
+			PerfTimer::Log(msg);
+		}
 		if (SUCCEEDED(hr = AddSourceFilterInternal(pFGF, lpcwstrFileName, pFGF->GetName(), &pBF))) {
 			PerfTimer::Log(L"AddSourceFilterInternal succeeded");
 			m_streampath.clear();
 			m_deadends.clear();
 
+			// Initialize audio while the startup worker loads the graphics driver.
+			// Scope this ordering to ordinary MPCVR file rendering (not DVD,
+			// capture, preview, or explicit pin-to-pin connection).
+			m_bRenderAudioFirst = !m_bIsPreview && !m_bOnlySub && !m_bOnlyAudio
+				&& GetRenderersSettings().iVideoRenderer == VIDRNDT_MPCVR;
 			PerfTimer::Log(L"ConnectFilter before");
 			hr = ConnectFilter(pBF, nullptr);
+			m_bRenderAudioFirst = false;
 			PerfTimer::Log(L"ConnectFilter after");
 			if (SUCCEEDED(hr)) {
 				m_bOpeningAborted = false;
@@ -1535,8 +1545,13 @@ STDMETHODIMP CFGManager::ConnectFilter(IBaseFilter* pBF, IPin* pPinIn)
 	CAppSettings& s = AfxGetAppSettings();
 	const CRenderersSettings& rs = s.m_VRSettings;
 
+	const bool audioFirst = m_bRenderAudioFirst && !pPinIn;
+	for (int pass = 0; pass < (audioFirst ? 2 : 1); ++pass) {
 	BeginEnumPins(pBF, pEP, pPin) {
 		if (S_OK == IsPinDirection(pPin, PINDIR_OUTPUT) && S_OK != IsPinConnected(pPin)) {
+			if (audioFirst && FindMT(pPin, MEDIATYPE_Audio) != (pass == 0)) {
+				continue;
+			}
 
 			if (GetPinName(pPin)[0] == '~') {
 				if (rs.iVideoRenderer != VIDRNDT_EVR_CP
@@ -1687,6 +1702,7 @@ STDMETHODIMP CFGManager::ConnectFilter(IBaseFilter* pBF, IPin* pPinIn)
 		}
 	}
 	EndEnumPins;
+	}
 
 	return
 		nRendered == nTotal ? (nRendered > 0 ? S_OK : S_FALSE) :
@@ -2974,19 +2990,10 @@ CFGManagerPlayer::CFGManagerPlayer(LPCWSTR pName, LPUNKNOWN pUnk, HWND hWnd, int
 	}
 
 	if (!m_bIsPreview) {
-		static UINT64 s_cachedAudioRendererMerit = 0;
-		if (s_cachedAudioRendererMerit == 0) {
-			UINT64 armerit_temp = MERIT64_RENDERER;
-			BeginEnumSysDev(CLSID_AudioRendererCategory, pMoniker) {
-				CFGFilterRegistry f(pMoniker);
-				if (f.GetMerit() > armerit_temp) {
-					armerit_temp = f.GetMerit() + 0x100;
-				}
-			}
-			EndEnumSysDev
-			s_cachedAudioRendererMerit = armerit_temp;
-		}
-		UINT64 armerit = s_cachedAudioRendererMerit;
+		// Explicit outputs must outrank any 32-bit DirectShow registry merit,
+		// while remaining below internal decoders and preferred overrides.
+		// Computing that bound avoids enumerating every audio device on launch.
+		UINT64 armerit = MERIT64_ABOVE_DSHOW - 0x1000;
 
 		armerit += 0x100; // for the first audio output give higher priority
 
